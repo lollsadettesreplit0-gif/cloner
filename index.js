@@ -40,16 +40,16 @@ async function mergeServers() {
     console.log(`🔄 Merge: ${target.name} → ${source.name}`);
 
     try {
-        // STEP 0: Aggiungi il simbolo '・' ai canali del SOURCE che non ce l'hanno
-        console.log('\n✨ Aggiungendo simbolo "・" ai canali SOURCE che ne mancano...');
+        // STEP 0: Rimuovi il simbolo '・' da TUTTI i canali del SOURCE
+        console.log('\n✨ Rimuovendo simbolo "・" dal SOURCE...');
         
         const sourceTextChannels = source.channels.cache
             .filter(ch => ch.type === 'GUILD_TEXT' || ch.type === 0);
         
         for (const ch of sourceTextChannels.values()) {
-            if (!ch.name.startsWith('・')) {
+            if (ch.name.startsWith('・')) {
                 try {
-                    const newName = `・${ch.name}`;
+                    const newName = ch.name.replace(/^・/, '');
                     console.log(`✏️ Rinominando #${ch.name} → #${newName}...`);
                     await ch.setName(newName).catch(err => {
                         console.error(`⚠️ Errore: ${err.message}`);
@@ -61,18 +61,41 @@ async function mergeServers() {
             }
         }
         
-        console.log('✅ Simboli aggiunti al SOURCE');
+        console.log('✅ Simboli rimossi dal SOURCE');
 
-        // STEP 1: Analizza creators in entrambi i server
+        // STEP 0.5: Rimuovi il simbolo '・' da TUTTI i canali del TARGET
+        console.log('\n✨ Rimuovendo simbolo "・" dal TARGET...');
+        
+        const targetTextChannels = target.channels.cache
+            .filter(ch => ch.type === 'GUILD_TEXT' || ch.type === 0);
+        
+        for (const ch of targetTextChannels.values()) {
+            if (ch.name.startsWith('・')) {
+                try {
+                    const newName = ch.name.replace(/^・/, '');
+                    console.log(`✏️ Rinominando #${ch.name} → #${newName}...`);
+                    await ch.setName(newName).catch(err => {
+                        console.error(`⚠️ Errore: ${err.message}`);
+                    });
+                    await sleep(200);
+                } catch (err) {
+                    console.error(`❌ Errore rinomina: ${err.message}`);
+                }
+            }
+        }
+        
+        console.log('✅ Simboli rimossi dal TARGET');
+
+        // STEP 1: Analizza creators in entrambi i server (SENZA simbolo)
         console.log('\n📊 ANALIZZANDO CREATORS...');
         
         const sourceChannels = source.channels.cache
             .filter(ch => ch.type === 'GUILD_TEXT' || ch.type === 0)
-            .map(ch => ch.name.toLowerCase());
+            .map(ch => ({ name: ch.name, original: ch }));
         
         const targetChannels = target.channels.cache
             .filter(ch => ch.type === 'GUILD_TEXT' || ch.type === 0)
-            .map(ch => ({ name: ch.name.toLowerCase(), original: ch }));
+            .map(ch => ({ name: ch.name, original: ch }));
 
         console.log(`📝 SOURCE: ${sourceChannels.length} creators`);
         console.log(`📝 TARGET: ${targetChannels.length} creators`);
@@ -83,12 +106,7 @@ async function mergeServers() {
         const existingCreators = [];
 
         for (const targetCh of targetChannels) {
-            // Confronta in modo case-insensitive E rimuovi il simbolo '・' prima del confronto
-            const targetNameClean = targetCh.name.replace(/^・/, '').toLowerCase();
-            const exists = sourceChannels.some(sourceName => {
-                const sourceNameClean = sourceName.replace(/^・/, '').toLowerCase();
-                return sourceNameClean === targetNameClean;
-            });
+            const exists = sourceChannels.some(sourceCh => sourceCh.name === targetCh.name);
             
             if (exists) {
                 existingCreators.push(targetCh.name);
@@ -132,20 +150,6 @@ async function mergeServers() {
             const categoryIndex = creatorIndex % categories.length;
             const category = categories[categoryIndex];
             
-            if (!category) continue;
-
-            try {
-                console.log(`📝 Creando #${creator.name} in ${category.name}...`);
-                
-                const newCh = await source.channels.create(creator.name, {
-                    type: 0,
-                    parent: category.id,
-                    topic: creator.original?.topic || '',
-                    nsfw: true
-                });        for (const creator of missingCreators) {
-            const categoryIndex = creatorIndex % categories.length;
-            const category = categories[categoryIndex];
-            
             if (!category) {
                 console.error(`❌ Categoria non trovata per #${creator.name}`);
                 continue;
@@ -154,12 +158,12 @@ async function mergeServers() {
             try {
                 // Anticlone: Verifica che il canale non esista già
                 const alreadyExists = source.channels.cache.find(ch => 
-                    ch.name.toLowerCase() === creator.name.toLowerCase() && 
-                    (ch.type === 'GUILD_TEXT' || ch.type === 0)
+                    ch.type === 'GUILD_TEXT' || ch.type === 0 &&
+                    ch.name === creator.name
                 );
                 
                 if (alreadyExists) {
-                    console.log(`⏭️ SALTATO: #${creator.name} (esiste già nel SOURCE)`);
+                    console.log(`⏭️ SALTATO: #${creator.name} (esiste già)`);
                     creatorIndex++;
                     continue;
                 }
@@ -172,7 +176,7 @@ async function mergeServers() {
                     topic: creator.original?.topic || '',
                     nsfw: true
                 }).catch(err => {
-                    if (err.message.includes('50035')) { // Channel name already taken
+                    if (err.message.includes('50035')) {
                         console.log(`⏭️ SALTATO: #${creator.name} (nome già in uso)`);
                         return null;
                     }
