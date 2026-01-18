@@ -130,6 +130,14 @@ async function startClone() {
                     continue;
                 }
                 
+                // Per user account: prova a leggere il canale
+                try {
+                    await channel.messages.fetch({ limit: 1 });
+                } catch (err) {
+                    console.log(`  ⏭️ SALTATO: ${channel.name} (no access)`);
+                    continue;
+                }
+                
                 console.log(`  📝 Creando: ${channel.name} (tipo: ${channel.type})`);
                 
                 // Converti tipo stringa in numero per la creazione
@@ -197,6 +205,14 @@ async function startClone() {
             // Salta canali esclusi
             if (EXCLUDED_CHANNELS.includes(channel.name) || EXCLUDED_CHANNELS.includes(channel.id)) {
                 console.log(`⏭️ SALTATO: ${channel.name} (escluso)`);
+                continue;
+            }
+            
+            // Per user account: prova a leggere il canale
+            try {
+                await channel.messages.fetch({ limit: 1 });
+            } catch (err) {
+                console.log(`⏭️ SALTATO: ${channel.name} (no access)`);
                 continue;
             }
             
