@@ -258,41 +258,7 @@ async function startClone() {
             await sleep(300);
         }
 
-        // Crea canale server-logs
-        console.log('📋 Creando canale server-logs...');
-        const logsCh = await sourceGuild.channels.create('server-logs', {
-            type: 0,
-            topic: 'Clone progress logs',
-            nsfw: false
-        }).catch(err => {
-            console.error('Errore creazione logs:', err.message);
-            return logsChannel;
-        });
-
-        const finalLogsCh = logsCh || logsChannel;
-
-        if (finalLogsCh) {
-            await finalLogsCh.send(`✅ **Struttura clonata!** ${channelMap.size} canali creati.`);
-            await finalLogsCh.send(`📥 Inizio copia messaggi e media dal TARGET...`);
-        }
-
-        // Crea canale server-logs
-        console.log('📋 Creando canale server-logs...');
-        const logsCh = await sourceGuild.channels.create('server-logs', {
-            type: 0,
-            topic: 'Clone progress logs',
-            nsfw: false
-        }).catch(err => {
-            console.error('Errore creazione logs:', err.message);
-            return logsChannel;
-        });
-
-        const finalLogsCh = logsCh || logsChannel;
-
-        if (finalLogsCh) {
-            await finalLogsCh.send(`✅ **Struttura clonata!** ${channelMap.size} canali creati.`);
-            await finalLogsCh.send(`📥 Inizio copia messaggi e media dal TARGET...`);
-        }
+        console.log(`✅ Struttura clonata: ${channelMap.size} canali`);
 
         // STEP 3: Copia messaggi
         console.log('📥 INIZIO COPIA MESSAGGI');
@@ -413,7 +379,7 @@ async function startClone() {
 
                         } catch (err) {
                             console.error(`    ⚠️ Msg: ${err.message}`);
-                            await sleep(1000);
+                            await sleep(2000);
                         }
                     }
 
@@ -427,10 +393,46 @@ async function startClone() {
                 console.error(`❌ Errore ${targetCh.name}: ${err.message}`);
             }
 
-            await sleep(2000);
+            await sleep(1000);
         }
 
         console.log(`🎉 COMPLETATO: ${totalMsg} messaggi, ${totalFiles} file`);
+
+        // STEP 4: Mescola i canali tra categorie diverse
+        console.log('🔀 Inizio mescolamento canali per offuscare la copia...');
+        
+        const allCategories = sourceGuild.channels.cache
+            .filter(ch => ch.type === 'GUILD_CATEGORY' || ch.type === 4)
+            .map(cat => cat);
+        
+        if (allCategories.length > 1) {
+            const allTextChannels = sourceGuild.channels.cache
+                .filter(ch => ch.type === 'GUILD_TEXT' || ch.type === 0)
+                .filter(ch => ch.parentId)
+                .map(ch => ch);
+            
+            // Mescola gli indici
+            for (let i = 0; i < allTextChannels.length; i++) {
+                const randomIndex = Math.floor(Math.random() * allTextChannels.length);
+                const randomCategory = allCategories[Math.floor(Math.random() * allCategories.length)];
+                
+                try {
+                    const channel = allTextChannels[randomIndex];
+                    console.log(`🔀 Spostando #${channel.name} in ${randomCategory.name}...`);
+                    await channel.setParent(randomCategory.id).catch(() => {});
+                    await sleep(200);
+                } catch (err) {
+                    console.error(`⚠️ Errore mescolamento: ${err.message}`);
+                }
+            }
+            
+            console.log('✅ Mescolamento completato');
+        }
+
+    } catch (err) {
+        console.error('❌ ERRORE GENERALE:', err);
+    }
+}
 
 async function downloadFile(url) {
     try {
