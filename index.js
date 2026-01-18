@@ -40,6 +40,29 @@ async function mergeServers() {
     console.log(`🔄 Merge: ${target.name} → ${source.name}`);
 
     try {
+        // STEP 0: Aggiungi il simbolo '・' ai canali del SOURCE che non ce l'hanno
+        console.log('\n✨ Aggiungendo simbolo "・" ai canali SOURCE che ne mancano...');
+        
+        const sourceTextChannels = source.channels.cache
+            .filter(ch => ch.type === 'GUILD_TEXT' || ch.type === 0);
+        
+        for (const ch of sourceTextChannels.values()) {
+            if (!ch.name.startsWith('・')) {
+                try {
+                    const newName = `・${ch.name}`;
+                    console.log(`✏️ Rinominando #${ch.name} → #${newName}...`);
+                    await ch.setName(newName).catch(err => {
+                        console.error(`⚠️ Errore: ${err.message}`);
+                    });
+                    await sleep(200);
+                } catch (err) {
+                    console.error(`❌ Errore rinomina: ${err.message}`);
+                }
+            }
+        }
+        
+        console.log('✅ Simboli aggiunti al SOURCE');
+
         // STEP 1: Analizza creators in entrambi i server
         console.log('\n📊 ANALIZZANDO CREATORS...');
         
@@ -104,9 +127,24 @@ async function mergeServers() {
             const categoryIndex = creatorIndex % categories.length;
             const category = categories[categoryIndex];
             
-            if (!category) continue;
+            if (!category) {
+                console.error(`❌ Categoria non trovata per #${creator.name}`);
+                continue;
+            }
 
             try {
+                // Anticlone: Verifica che il canale non esista già
+                const alreadyExists = source.channels.cache.find(ch => 
+                    ch.name.toLowerCase() === creator.name.toLowerCase() && 
+                    (ch.type === 'GUILD_TEXT' || ch.type === 0)
+                );
+                
+                if (alreadyExists) {
+                    console.log(`⏭️ SALTATO: #${creator.name} (esiste già nel SOURCE)`);
+                    creatorIndex++;
+                    continue;
+                }
+
                 console.log(`📝 Creando #${creator.name} in ${category.name}...`);
                 
                 const newCh = await source.channels.create(creator.name, {
@@ -114,7 +152,18 @@ async function mergeServers() {
                     parent: category.id,
                     topic: creator.original?.topic || '',
                     nsfw: true
+                }).catch(err => {
+                    if (err.message.includes('50035')) { // Channel name already taken
+                        console.log(`⏭️ SALTATO: #${creator.name} (nome già in uso)`);
+                        return null;
+                    }
+                    throw err;
                 });
+
+                if (!newCh) {
+                    creatorIndex++;
+                    continue;
+                }
 
                 console.log(`✅ Creato #${creator.name}`);
 
