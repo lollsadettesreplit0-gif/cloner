@@ -17,7 +17,7 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const TARGET_GUILD_ID = process.env.TARGET_GUILD_ID;
 const SOURCE_GUILD_ID = process.env.SOURCE_GUILD_ID;
 
-// CANALI DA ESCLUDERE (per ID o nome)
+// CANALI DA ESCLUDERE
 const EXCLUDED_CHANNELS = [
     '1299125689659686952',
     '1299822514670801008',
@@ -31,13 +31,10 @@ const channelMap = new Map();
 
 client.on('ready', async () => {
     console.log(`✅ Selfbot attivo: ${client.user.tag}`);
-    console.log(`📥 TARGET (da copiare): ${TARGET_GUILD_ID}`);
-    console.log(`📤 SOURCE (dove incollare): ${SOURCE_GUILD_ID}`);
-    
-    // PARTE AUTOMATICAMENTE DOPO 5 SECONDI
+    console.log(`📥 TARGET: ${TARGET_GUILD_ID}`);
+    console.log(`📤 SOURCE: ${SOURCE_GUILD_ID}`);
     console.log('⏳ Clonazione automatica tra 5 secondi...');
     await sleep(5000);
-    
     await startClone();
 });
 
@@ -49,8 +46,6 @@ async function startClone() {
 
     if (!targetGuild || !sourceGuild) {
         console.error('❌ Server non trovati!');
-        console.error(`Target: ${targetGuild ? 'OK' : 'MANCANTE'}`);
-        console.error(`Source: ${sourceGuild ? 'OK' : 'MANCANTE'}`);
         return;
     }
 
@@ -74,25 +69,14 @@ async function startClone() {
         await sleep(2000);
         console.log('✅ Canali eliminati');
 
-        // DEBUG: Mostra TUTTI i canali del TARGET
-        console.log('📋 DEBUG - Tutti i canali del TARGET:');
-        console.log(`   Totale canali cache: ${targetGuild.channels.cache.size}`);
-        
-        targetGuild.channels.cache.forEach(ch => {
-            console.log(`   - ${ch.name} | Tipo: ${ch.type} | Parent: ${ch.parentId || 'NESSUNO'} | ID: ${ch.id}`);
-        });
-        
-        // STEP 2: Clona TUTTI i canali dal TARGET (qualsiasi tipo)
-        console.log('📋 Analizzando canali del TARGET...');
-        
-        // Prima clona le categorie
+        // STEP 2: Clona categorie
         const categories = targetGuild.channels.cache
             .filter(ch => ch.type === 'GUILD_CATEGORY' || ch.type === 4)
             .sort((a, b) => a.position - b.position);
 
         console.log(`📁 Categorie trovate: ${categories.size}`);
 
-        let statusChannel = null;
+        let logsChannel = null;
 
         for (const category of categories.values()) {
             console.log(`📁 Creando categoria: ${category.name}`);
@@ -127,7 +111,7 @@ async function startClone() {
             }
             
             const newCat = await sourceGuild.channels.create(category.name, {
-                type: 4, // GUILD_CATEGORY
+                type: 4,
                 position: category.position
             }).catch(err => {
                 console.error(`❌ Errore categoria ${category.name}: ${err.message}`);
@@ -137,12 +121,11 @@ async function startClone() {
             if (!newCat) continue;
             await sleep(500);
 
-            // Clona TUTTI i canali della categoria (qualsiasi tipo tranne voice e thread)
+            // Clona canali text della categoria
             const channelsInCategory = targetGuild.channels.cache
                 .filter(ch => {
                     if (ch.parentId !== category.id) return false;
                     const type = ch.type;
-                    // Escludi voice e thread
                     return type !== 'GUILD_VOICE' && type !== 2 && 
                            type !== 'GUILD_PUBLIC_THREAD' && type !== 11 &&
                            type !== 'GUILD_PRIVATE_THREAD' && type !== 12 &&
@@ -150,16 +133,12 @@ async function startClone() {
                 })
                 .sort((a, b) => a.position - b.position);
 
-            console.log(`  Canali in ${category.name}: ${channelsInCategory.size}`);
-
             for (const channel of channelsInCategory.values()) {
-                // Salta canali esclusi
                 if (EXCLUDED_CHANNELS.includes(channel.name) || EXCLUDED_CHANNELS.includes(channel.id)) {
                     console.log(`  ⏭️ SALTATO: ${channel.name} (escluso)`);
                     continue;
                 }
                 
-                // Per user account: controlla se riesci a leggere PRIMA di clonare
                 let hasAccess = true;
                 try {
                     await channel.messages.fetch({ limit: 1 });
@@ -170,10 +149,9 @@ async function startClone() {
                 
                 if (!hasAccess) continue;
                 
-                console.log(`  📝 Creando: ${channel.name} (tipo: ${channel.type})`);
+                console.log(`  📝 Creando: ${channel.name}`);
                 
-                // Converti tipo stringa in numero per la creazione
-                let channelType = 0; // Default: text
+                let channelType = 0;
                 if (channel.type === 'GUILD_TEXT' || channel.type === 0) channelType = 0;
                 else if (channel.type === 'GUILD_NEWS' || channel.type === 5) channelType = 5;
                 else if (channel.type === 'GUILD_FORUM' || channel.type === 15) channelType = 15;
@@ -191,7 +169,7 @@ async function startClone() {
 
                 if (newCh) {
                     channelMap.set(channel.id, newCh.id);
-                    if (!statusChannel) statusChannel = newCh;
+                    if (!logsChannel) logsChannel = newCh;
                 }
                 
                 await sleep(500);
@@ -203,10 +181,8 @@ async function startClone() {
                 .sort((a, b) => a.position - b.position);
 
             for (const channel of voiceChannels.values()) {
-                // Salta voice a cui non hai accesso
                 let hasAccess = true;
                 try {
-                    // Per voice, prova a fare fetch di info
                     await channel.fetch();
                 } catch (err) {
                     console.log(`  ⏭️ SALTATO VOICE: ${channel.name} (no access)`);
@@ -229,7 +205,7 @@ async function startClone() {
             }
         }
 
-        // Clona canali senza categoria (TUTTI i tipi tranne voice, thread e category)
+        // Clona canali senza categoria
         const noCategory = targetGuild.channels.cache
             .filter(ch => {
                 if (ch.parentId) return false;
@@ -246,13 +222,11 @@ async function startClone() {
         }
 
         for (const channel of noCategory.values()) {
-            // Salta canali esclusi
             if (EXCLUDED_CHANNELS.includes(channel.name) || EXCLUDED_CHANNELS.includes(channel.id)) {
                 console.log(`⏭️ SALTATO: ${channel.name} (escluso)`);
                 continue;
             }
             
-            // Per user account: controlla se riesci a leggere PRIMA di clonare
             let hasAccess = true;
             try {
                 await channel.messages.fetch({ limit: 1 });
@@ -263,9 +237,8 @@ async function startClone() {
             
             if (!hasAccess) continue;
             
-            console.log(`📝 Creando: ${channel.name} (tipo: ${channel.type})`);
+            console.log(`📝 Creando: ${channel.name}`);
             
-            // Converti tipo stringa in numero
             let channelType = 0;
             if (channel.type === 'GUILD_TEXT' || channel.type === 0) channelType = 0;
             else if (channel.type === 'GUILD_NEWS' || channel.type === 5) channelType = 5;
@@ -283,35 +256,33 @@ async function startClone() {
 
             if (newCh) {
                 channelMap.set(channel.id, newCh.id);
-                if (!statusChannel) statusChannel = newCh;
+                if (!logsChannel) logsChannel = newCh;
             }
             
             await sleep(500);
         }
 
-        if (!statusChannel) {
-            console.error('❌ Nessun canale creato per status!');
-            return;
-        }
-
-        // Crea il canale "server-logs" per gli aggiornamenti
+        // Crea canale server-logs
         console.log('📋 Creando canale server-logs...');
-        const logsChannel = await sourceGuild.channels.create('server-logs', {
-            type: 0, // Text
+        const logsCh = await sourceGuild.channels.create('server-logs', {
+            type: 0,
             topic: 'Clone progress logs',
             nsfw: false
         }).catch(err => {
-            console.error('Errore creazione logs channel:', err.message);
-            return statusChannel; // Fallback
+            console.error('Errore creazione logs:', err.message);
+            return logsChannel;
         });
 
-        const logsCh = logsChannel || statusChannel;
+        const finalLogsCh = logsCh || logsChannel;
 
-        console.log(`✅ Struttura clonata: ${channelMap.size} canali text mappati`);
-        await logsCh.send(`✅ **Struttura clonata!** ${channelMap.size} canali creati.`);
-        await logsCh.send(`📥 Inizio copia messaggi e media dal TARGET...`);
+        if (finalLogsCh) {
+            await finalLogsCh.send(`✅ **Struttura clonata!** ${channelMap.size} canali creati.`);
+            await finalLogsCh.send(`📥 Inizio copia messaggi e media dal TARGET...`);
+        }
 
-        // STEP 3: Copia tutti i messaggi con media
+        console.log(`✅ Struttura clonata: ${channelMap.size} canali`);
+
+        // STEP 3: Copia messaggi
         console.log('📥 INIZIO COPIA MESSAGGI');
         let totalMsg = 0;
         let totalFiles = 0;
@@ -324,7 +295,7 @@ async function startClone() {
 
             try {
                 console.log(`📂 Copiando #${targetCh.name}...`);
-                await logsCh.send(`📂 Copiando **#${targetCh.name}**...`);
+                if (finalLogsCh) await finalLogsCh.send(`📂 Copiando **#${targetCh.name}**...`);
 
                 let lastId;
                 let chMsg = 0;
@@ -345,35 +316,27 @@ async function startClone() {
 
                     for (const msg of msgsArray) {
                         try {
-                            // Salta messaggi di sistema
                             if (msg.system || msg.author.bot || msg.author.id === '1') {
                                 continue;
                             }
 
-                            // Salta messaggi vuoti o solo testo eliminato
                             if (!msg.content && msg.attachments.size === 0 && msg.embeds.length === 0) {
                                 continue;
                             }
-
-                            const ts = msg.createdAt.toLocaleString('it-IT');
-                            let txt = msg.content || '';
-                            const header = `**${msg.author.username}** (${ts})`;
 
                             const files = [];
                             const links = [];
                             
                             for (const att of msg.attachments.values()) {
                                 try {
-                                    console.log(`    📎 Processing: ${att.name} (${(att.size / 1024 / 1024).toFixed(2)}MB)`);
+                                    console.log(`    📎 Processing: ${att.name}`);
                                     
-                                    // Se il file è troppo grande (> 20MB), salva il link
-                                    if (att.size > 20971520) { // 20MB
+                                    if (att.size > 20971520) {
                                         console.log(`    ⚠️ File troppo grande, salvo link`);
                                         links.push(att.url);
                                         continue;
                                     }
                                     
-                                    // Scarica il file
                                     const data = await downloadFile(att.url);
                                     if (data) {
                                         files.push({ attachment: data, name: att.name });
@@ -386,7 +349,6 @@ async function startClone() {
                                 }
                             }
 
-                            // Invia SOLO i media senza testo
                             if (files.length > 0) {
                                 try {
                                     await sourceCh.send({
@@ -394,14 +356,12 @@ async function startClone() {
                                     });
                                 } catch (err) {
                                     console.error(`    ⚠️ Send files: ${err.message}`);
-                                    // Se fallisce, invia il link
                                     for (const link of links) {
                                         await sourceCh.send(link).catch(() => {});
                                     }
                                 }
                             }
 
-                            // Invia i link dei file troppo grandi
                             if (links.length > 0) {
                                 try {
                                     for (const link of links) {
@@ -413,7 +373,6 @@ async function startClone() {
                                 }
                             }
 
-                            // Se ci sono embeds, inviali
                             if (msg.embeds.length > 0) {
                                 try {
                                     await sourceCh.send({
@@ -424,7 +383,7 @@ async function startClone() {
                                 }
                             }
 
-                            // Se c'è testo E non ha media, invia il testo
+                            let txt = msg.content || '';
                             if (txt && files.length === 0 && links.length === 0 && msg.embeds.length === 0) {
                                 try {
                                     await sourceCh.send({
@@ -437,8 +396,6 @@ async function startClone() {
 
                             chMsg++;
                             totalMsg++;
-                            
-                            // Rate limit più aggressivo: 500ms invece di 1500ms
                             await sleep(500);
 
                         } catch (err) {
@@ -451,23 +408,22 @@ async function startClone() {
                     await sleep(3000);
                 }
 
-                await logsCh.send(`✅ **#${targetCh.name}**: ${chMsg} msg, ${chFiles} file`);
                 console.log(`✅ ${targetCh.name}: ${chMsg} msg, ${chFiles} file`);
+                if (finalLogsCh) await finalLogsCh.send(`✅ **#${targetCh.name}**: ${chMsg} msg, ${chFiles} file`);
 
             } catch (err) {
                 console.error(`❌ Errore ${targetCh.name}: ${err.message}`);
-                await logsCh.send(`❌ Errore in #${targetCh.name}`);
+                if (finalLogsCh) await finalLogsCh.send(`❌ Errore in #${targetCh.name}`);
             }
 
             await sleep(2000);
         }
 
-        await logsCh.send(`🎉 **COMPLETATO!**\n📊 ${totalMsg} messaggi\n📎 ${totalFiles} file copiati`);
         console.log(`🎉 COMPLETATO: ${totalMsg} messaggi, ${totalFiles} file`);
+        if (finalLogsCh) await finalLogsCh.send(`🎉 **COMPLETATO!**\n📊 ${totalMsg} messaggi\n📎 ${totalFiles} file copiati`);
 
     } catch (err) {
         console.error('❌ ERRORE GENERALE:', err);
-        console.error(err.stack);
     }
 }
 
@@ -476,6 +432,20 @@ async function downloadFile(url) {
         const res = await axios.get(url, {
             responseType: 'arraybuffer',
             timeout: 30000,
-            maxContentLength: 20971520 // 20MB max per download
+            maxContentLength: 20971520
         });
-        return Buffer.from
+        return Buffer.from(res.data);
+    } catch (err) {
+        console.error('Download fallito:', err.message);
+        return null;
+    }
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+client.login(TOKEN).catch(err => {
+    console.error('❌ Login fallito:', err.message);
+    process.exit(1);
+});
