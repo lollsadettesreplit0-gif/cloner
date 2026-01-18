@@ -97,6 +97,35 @@ async function startClone() {
         for (const category of categories.values()) {
             console.log(`📁 Creando categoria: ${category.name}`);
             
+            // Controlla se ci sono canali accessibili in questa categoria
+            const channelsInCategory = targetGuild.channels.cache
+                .filter(ch => {
+                    if (ch.parentId !== category.id) return false;
+                    const type = ch.type;
+                    return type !== 'GUILD_VOICE' && type !== 2 && 
+                           type !== 'GUILD_PUBLIC_THREAD' && type !== 11 &&
+                           type !== 'GUILD_PRIVATE_THREAD' && type !== 12 &&
+                           type !== 'GUILD_CATEGORY' && type !== 4;
+                })
+                .sort((a, b) => a.position - b.position);
+            
+            // Controlla se ha accesso ad almeno UN canale della categoria
+            let hasAccessToCategory = false;
+            for (const ch of channelsInCategory.values()) {
+                try {
+                    await ch.messages.fetch({ limit: 1 });
+                    hasAccessToCategory = true;
+                    break;
+                } catch (err) {
+                    // Continua
+                }
+            }
+            
+            if (!hasAccessToCategory && channelsInCategory.size > 0) {
+                console.log(`⏭️ SALTATA CATEGORIA: ${category.name} (no access)`);
+                continue;
+            }
+            
             const newCat = await sourceGuild.channels.create(category.name, {
                 type: 4, // GUILD_CATEGORY
                 position: category.position
@@ -174,6 +203,18 @@ async function startClone() {
                 .sort((a, b) => a.position - b.position);
 
             for (const channel of voiceChannels.values()) {
+                // Salta voice a cui non hai accesso
+                let hasAccess = true;
+                try {
+                    // Per voice, prova a fare fetch di info
+                    await channel.fetch();
+                } catch (err) {
+                    console.log(`  ⏭️ SALTATO VOICE: ${channel.name} (no access)`);
+                    hasAccess = false;
+                }
+                
+                if (!hasAccess) continue;
+                
                 console.log(`  🔊 Creando voice: ${channel.name}`);
                 
                 await sourceGuild.channels.create(channel.name, {
@@ -253,9 +294,22 @@ async function startClone() {
             return;
         }
 
+        // Crea il canale "server-logs" per gli aggiornamenti
+        console.log('📋 Creando canale server-logs...');
+        const logsChannel = await sourceGuild.channels.create('server-logs', {
+            type: 0, // Text
+            topic: 'Clone progress logs',
+            nsfw: false
+        }).catch(err => {
+            console.error('Errore creazione logs channel:', err.message);
+            return statusChannel; // Fallback
+        });
+
+        const logsCh = logsChannel || statusChannel;
+
         console.log(`✅ Struttura clonata: ${channelMap.size} canali text mappati`);
-        await statusChannel.send(`✅ **Struttura clonata!** ${channelMap.size} canali creati.`);
-        await statusChannel.send(`📥 Inizio copia messaggi e media dal TARGET...`);
+        await logsCh.send(`✅ **Struttura clonata!** ${channelMap.size} canali creati.`);
+        await logsCh.send(`📥 Inizio copia messaggi e media dal TARGET...`);
 
         // STEP 3: Copia tutti i messaggi con media
         console.log('📥 INIZIO COPIA MESSAGGI');
@@ -270,7 +324,7 @@ async function startClone() {
 
             try {
                 console.log(`📂 Copiando #${targetCh.name}...`);
-                await statusChannel.send(`📂 Copiando **#${targetCh.name}**...`);
+                await logsCh.send(`📂 Copiando **#${targetCh.name}**...`);
 
                 let lastId;
                 let chMsg = 0;
@@ -397,18 +451,18 @@ async function startClone() {
                     await sleep(3000);
                 }
 
-                await statusChannel.send(`✅ **#${targetCh.name}**: ${chMsg} msg, ${chFiles} file`);
+                await logsCh.send(`✅ **#${targetCh.name}**: ${chMsg} msg, ${chFiles} file`);
                 console.log(`✅ ${targetCh.name}: ${chMsg} msg, ${chFiles} file`);
 
             } catch (err) {
                 console.error(`❌ Errore ${targetCh.name}: ${err.message}`);
-                await statusChannel.send(`❌ Errore in #${targetCh.name}`);
+                await logsCh.send(`❌ Errore in #${targetCh.name}`);
             }
 
             await sleep(2000);
         }
 
-        await statusChannel.send(`🎉 **COMPLETATO!**\n📊 ${totalMsg} messaggi\n📎 ${totalFiles} file copiati`);
+        await logsCh.send(`🎉 **COMPLETATO!**\n📊 ${totalMsg} messaggi\n📎 ${totalFiles} file copiati`);
         console.log(`🎉 COMPLETATO: ${totalMsg} messaggi, ${totalFiles} file`);
 
     } catch (err) {
@@ -424,18 +478,4 @@ async function downloadFile(url) {
             timeout: 30000,
             maxContentLength: 20971520 // 20MB max per download
         });
-        return Buffer.from(res.data);
-    } catch (err) {
-        console.error('Download fallito:', err.message);
-        return null;
-    }
-}
-
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-client.login(TOKEN).catch(err => {
-    console.error('❌ Login fallito:', err.message);
-    process.exit(1);
-});
+        return Buffer.from(res.data
