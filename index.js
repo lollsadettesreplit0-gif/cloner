@@ -74,6 +74,14 @@ async function startClone() {
         await sleep(2000);
         console.log('✅ Canali eliminati');
 
+        // DEBUG: Mostra TUTTI i canali del TARGET
+        console.log('📋 DEBUG - Tutti i canali del TARGET:');
+        console.log(`   Totale canali cache: ${targetGuild.channels.cache.size}`);
+        
+        targetGuild.channels.cache.forEach(ch => {
+            console.log(`   - ${ch.name} | Tipo: ${ch.type} | Parent: ${ch.parentId || 'NESSUNO'} | ID: ${ch.id}`);
+        });
+        
         // STEP 2: Clona TUTTI i canali dal TARGET (qualsiasi tipo)
         console.log('📋 Analizzando canali del TARGET...');
         
