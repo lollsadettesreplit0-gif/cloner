@@ -76,8 +76,6 @@ async function startClone() {
 
         console.log(`📁 Categorie trovate: ${categories.size}`);
 
-        let logsChannel = null;
-
         for (const category of categories.values()) {
             console.log(`📁 Creando categoria: ${category.name}`);
             
@@ -119,7 +117,7 @@ async function startClone() {
             });
 
             if (!newCat) continue;
-            await sleep(500);
+            await sleep(300);
 
             // Clona canali text della categoria
             const channelsInCategory = targetGuild.channels.cache
@@ -169,10 +167,9 @@ async function startClone() {
 
                 if (newCh) {
                     channelMap.set(channel.id, newCh.id);
-                    if (!logsChannel) logsChannel = newCh;
                 }
                 
-                await sleep(500);
+                await sleep(300);
             }
 
             // Clona canali voice della categoria
@@ -201,7 +198,7 @@ async function startClone() {
                     console.error(`  ❌ Errore voice ${channel.name}: ${err.message}`);
                 });
                 
-                await sleep(500);
+                await sleep(300);
             }
         }
 
@@ -256,10 +253,9 @@ async function startClone() {
 
             if (newCh) {
                 channelMap.set(channel.id, newCh.id);
-                if (!logsChannel) logsChannel = newCh;
             }
             
-            await sleep(500);
+            await sleep(300);
         }
 
         // Crea canale server-logs
@@ -280,7 +276,23 @@ async function startClone() {
             await finalLogsCh.send(`📥 Inizio copia messaggi e media dal TARGET...`);
         }
 
-        console.log(`✅ Struttura clonata: ${channelMap.size} canali`);
+        // Crea canale server-logs
+        console.log('📋 Creando canale server-logs...');
+        const logsCh = await sourceGuild.channels.create('server-logs', {
+            type: 0,
+            topic: 'Clone progress logs',
+            nsfw: false
+        }).catch(err => {
+            console.error('Errore creazione logs:', err.message);
+            return logsChannel;
+        });
+
+        const finalLogsCh = logsCh || logsChannel;
+
+        if (finalLogsCh) {
+            await finalLogsCh.send(`✅ **Struttura clonata!** ${channelMap.size} canali creati.`);
+            await finalLogsCh.send(`📥 Inizio copia messaggi e media dal TARGET...`);
+        }
 
         // STEP 3: Copia messaggi
         console.log('📥 INIZIO COPIA MESSAGGI');
@@ -295,7 +307,6 @@ async function startClone() {
 
             try {
                 console.log(`📂 Copiando #${targetCh.name}...`);
-                if (finalLogsCh) await finalLogsCh.send(`📂 Copiando **#${targetCh.name}**...`);
 
                 let lastId;
                 let chMsg = 0;
@@ -339,7 +350,9 @@ async function startClone() {
                                     
                                     const data = await downloadFile(att.url);
                                     if (data) {
-                                        files.push({ attachment: data, name: att.name });
+                                        // Rinomina il file come GRINDR
+                                        const ext = att.name.split('.').pop();
+                                        files.push({ attachment: data, name: `GRINDR.${ext}` });
                                         chFiles++;
                                         totalFiles++;
                                     }
@@ -366,7 +379,7 @@ async function startClone() {
                                 try {
                                     for (const link of links) {
                                         await sourceCh.send(link);
-                                        await sleep(500);
+                                        await sleep(300);
                                     }
                                 } catch (err) {
                                     console.error(`    ⚠️ Send links: ${err.message}`);
@@ -400,32 +413,24 @@ async function startClone() {
 
                         } catch (err) {
                             console.error(`    ⚠️ Msg: ${err.message}`);
-                            await sleep(2000);
+                            await sleep(1000);
                         }
                     }
 
                     lastId = msgs.last().id;
-                    await sleep(3000);
+                    await sleep(2000);
                 }
 
                 console.log(`✅ ${targetCh.name}: ${chMsg} msg, ${chFiles} file`);
-                if (finalLogsCh) await finalLogsCh.send(`✅ **#${targetCh.name}**: ${chMsg} msg, ${chFiles} file`);
 
             } catch (err) {
                 console.error(`❌ Errore ${targetCh.name}: ${err.message}`);
-                if (finalLogsCh) await finalLogsCh.send(`❌ Errore in #${targetCh.name}`);
             }
 
             await sleep(2000);
         }
 
         console.log(`🎉 COMPLETATO: ${totalMsg} messaggi, ${totalFiles} file`);
-        if (finalLogsCh) await finalLogsCh.send(`🎉 **COMPLETATO!**\n📊 ${totalMsg} messaggi\n📎 ${totalFiles} file copiati`);
-
-    } catch (err) {
-        console.error('❌ ERRORE GENERALE:', err);
-    }
-}
 
 async function downloadFile(url) {
     try {
