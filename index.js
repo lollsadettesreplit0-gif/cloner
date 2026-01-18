@@ -130,13 +130,16 @@ async function startClone() {
                     continue;
                 }
                 
-                // Per user account: prova a leggere il canale
+                // Per user account: controlla se riesci a leggere PRIMA di clonare
+                let hasAccess = true;
                 try {
                     await channel.messages.fetch({ limit: 1 });
                 } catch (err) {
                     console.log(`  ⏭️ SALTATO: ${channel.name} (no access)`);
-                    continue;
+                    hasAccess = false;
                 }
+                
+                if (!hasAccess) continue;
                 
                 console.log(`  📝 Creando: ${channel.name} (tipo: ${channel.type})`);
                 
@@ -208,13 +211,16 @@ async function startClone() {
                 continue;
             }
             
-            // Per user account: prova a leggere il canale
+            // Per user account: controlla se riesci a leggere PRIMA di clonare
+            let hasAccess = true;
             try {
                 await channel.messages.fetch({ limit: 1 });
             } catch (err) {
                 console.log(`⏭️ SALTATO: ${channel.name} (no access)`);
-                continue;
+                hasAccess = false;
             }
+            
+            if (!hasAccess) continue;
             
             console.log(`📝 Creando: ${channel.name} (tipo: ${channel.type})`);
             
