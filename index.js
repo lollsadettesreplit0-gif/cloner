@@ -74,12 +74,15 @@ async function startClone() {
         await sleep(2000);
         console.log('✅ Canali eliminati');
 
-        // STEP 2: Clona categorie dal TARGET
+        // STEP 2: Clona TUTTI i canali dal TARGET (qualsiasi tipo)
+        console.log('📋 Analizzando canali del TARGET...');
+        
+        // Prima clona le categorie
         const categories = targetGuild.channels.cache
             .filter(ch => ch.type === 4)
             .sort((a, b) => a.position - b.position);
 
-        console.log(`📁 Trovate ${categories.size} categorie da clonare`);
+        console.log(`📁 Categorie trovate: ${categories.size}`);
 
         let statusChannel = null;
 
@@ -97,22 +100,32 @@ async function startClone() {
             if (!newCat) continue;
             await sleep(500);
 
-            // Clona TUTTI i canali text della categoria (anche privati)
-            const textChannels = targetGuild.channels.cache
-                .filter(ch => ch.parentId === category.id && (ch.type === 0 || ch.type === 5))
+            // Clona TUTTI i canali della categoria (qualsiasi tipo tranne voice)
+            const channelsInCategory = targetGuild.channels.cache
+                .filter(ch => ch.parentId === category.id && ch.type !== 2 && ch.type !== 4)
                 .sort((a, b) => a.position - b.position);
 
-            for (const channel of textChannels.values()) {
+            console.log(`  Canali in ${category.name}: ${channelsInCategory.size}`);
+
+            for (const channel of channelsInCategory.values()) {
                 // Salta canali esclusi
                 if (EXCLUDED_CHANNELS.includes(channel.name) || EXCLUDED_CHANNELS.includes(channel.id)) {
                     console.log(`  ⏭️ SALTATO: ${channel.name} (escluso)`);
                     continue;
                 }
                 
-                console.log(`  📝 Creando text: ${channel.name}`);
+                console.log(`  📝 Creando: ${channel.name} (tipo: ${channel.type})`);
+                
+                // Crea canale con il tipo originale
+                let channelType = channel.type;
+                // Se il tipo non è supportato, usa text (0)
+                if (![0, 5, 10, 11, 12, 15].includes(channelType)) {
+                    console.log(`    ⚠️ Tipo ${channelType} non supportato, uso text`);
+                    channelType = 0;
+                }
                 
                 const newCh = await sourceGuild.channels.create(channel.name, {
-                    type: channel.type === 5 ? 5 : 0, // 5 = announcement/news, 0 = text
+                    type: channelType,
                     parent: newCat.id,
                     topic: channel.topic || '',
                     nsfw: true,
@@ -150,9 +163,9 @@ async function startClone() {
             }
         }
 
-        // Clona canali senza categoria (anche privati)
+        // Clona canali senza categoria
         const noCategory = targetGuild.channels.cache
-            .filter(ch => !ch.parentId && (ch.type === 0 || ch.type === 5))
+            .filter(ch => !ch.parentId && ch.type === 0)
             .sort((a, b) => a.position - b.position);
 
         if (noCategory.size > 0) {
@@ -169,7 +182,7 @@ async function startClone() {
             console.log(`📝 Creando canale root: ${channel.name}`);
             
             const newCh = await sourceGuild.channels.create(channel.name, {
-                type: channel.type === 5 ? 5 : 0, // 5 = announcement, 0 = text
+                type: 0,
                 topic: channel.topic || '',
                 nsfw: true,
                 position: channel.position
