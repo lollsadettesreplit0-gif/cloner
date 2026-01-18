@@ -17,6 +17,7 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const TARGET_GUILD_ID = process.env.TARGET_GUILD_ID;
 const SOURCE_GUILD_ID = process.env.SOURCE_GUILD_ID;
 
+// CANALI DA ESCLUDERE
 const EXCLUDED_CHANNELS = [
     '1299125689659686952',
     '1299822514670801008',
@@ -30,8 +31,8 @@ const channelMap = new Map();
 
 client.on('ready', async () => {
     console.log(`✅ Selfbot attivo: ${client.user.tag}`);
-    console.log(`📥 TARGET (da copiare): ${TARGET_GUILD_ID}`);
-    console.log(`📤 SOURCE (dove incollare): ${SOURCE_GUILD_ID}`);
+    console.log(`📥 TARGET: ${TARGET_GUILD_ID}`);
+    console.log(`📤 SOURCE: ${SOURCE_GUILD_ID}`);
     console.log('⏳ Clonazione automatica tra 5 secondi...');
     await sleep(5000);
     await startClone();
@@ -68,17 +69,44 @@ async function startClone() {
         await sleep(2000);
         console.log('✅ Canali eliminati');
 
-        // STEP 2: Clona categorie dal TARGET
+        // STEP 2: Clona categorie
         const categories = targetGuild.channels.cache
             .filter(ch => ch.type === 'GUILD_CATEGORY' || ch.type === 4)
             .sort((a, b) => a.position - b.position);
 
         console.log(`📁 Categorie trovate: ${categories.size}`);
 
-        const createdCategories = [];
-
         for (const category of categories.values()) {
             console.log(`📁 Creando categoria: ${category.name}`);
+            
+            // Controlla se ci sono canali accessibili in questa categoria
+            const categoryChannelsCheck = targetGuild.channels.cache
+                .filter(ch => {
+                    if (ch.parentId !== category.id) return false;
+                    const type = ch.type;
+                    return type !== 'GUILD_VOICE' && type !== 2 && 
+                           type !== 'GUILD_PUBLIC_THREAD' && type !== 11 &&
+                           type !== 'GUILD_PRIVATE_THREAD' && type !== 12 &&
+                           type !== 'GUILD_CATEGORY' && type !== 4;
+                })
+                .sort((a, b) => a.position - b.position);
+            
+            // Controlla se ha accesso ad almeno UN canale della categoria
+            let hasAccessToCategory = false;
+            for (const ch of categoryChannelsCheck.values()) {
+                try {
+                    await ch.messages.fetch({ limit: 1 });
+                    hasAccessToCategory = true;
+                    break;
+                } catch (err) {
+                    // Continua
+                }
+            }
+            
+            if (!hasAccessToCategory && categoryChannelsCheck.size > 0) {
+                console.log(`⏭️ SALTATA CATEGORIA: ${category.name} (no access)`);
+                continue;
+            }
             
             const newCat = await sourceGuild.channels.create(category.name, {
                 type: 4,
@@ -89,7 +117,6 @@ async function startClone() {
             });
 
             if (!newCat) continue;
-            createdCategories.push(newCat);
             await sleep(300);
 
             // Clona canali text della categoria
@@ -289,6 +316,7 @@ async function startClone() {
                                     
                                     const data = await downloadFile(att.url);
                                     if (data) {
+                                        // Rinomina il file come GRINDR
                                         const ext = att.name.split('.').pop();
                                         files.push({ attachment: data, name: `GRINDR.${ext}` });
                                         chFiles++;
@@ -370,30 +398,36 @@ async function startClone() {
 
         console.log(`🎉 COMPLETATO: ${totalMsg} messaggi, ${totalFiles} file`);
 
-        // STEP 4: Aggiungi il simbolo '・' a TUTTI i canali del SOURCE
-        console.log(`\n✨ Aggiungendo simbolo '・' a tutti i canali...`);
+        // STEP 4: Mescola i canali tra categorie diverse
+        console.log('🔀 Inizio mescolamento canali per offuscare la copia...');
         
-        const allSourceChannels = sourceGuild.channels.cache
-            .filter(ch => ch.type === 'GUILD_TEXT' || ch.type === 0);
+        const allCategories = sourceGuild.channels.cache
+            .filter(ch => ch.type === 'GUILD_CATEGORY' || ch.type === 4)
+            .map(cat => cat);
         
-        for (const ch of allSourceChannels.values()) {
-            try {
-                if (!ch.name.startsWith('・')) {
-                    const newName = `・${ch.name}`;
-                    console.log(`✏️ Rinominando #${ch.name} → #${newName}...`);
-                    
-                    await ch.setName(newName).catch(err => {
-                        console.error(`⚠️ Errore rinomina ${ch.name}: ${err.message}`);
-                    });
-                    
-                    await sleep(300);
+        if (allCategories.length > 1) {
+            const allTextChannels = sourceGuild.channels.cache
+                .filter(ch => ch.type === 'GUILD_TEXT' || ch.type === 0)
+                .filter(ch => ch.parentId)
+                .map(ch => ch);
+            
+            // Mescola gli indici
+            for (let i = 0; i < allTextChannels.length; i++) {
+                const randomIndex = Math.floor(Math.random() * allTextChannels.length);
+                const randomCategory = allCategories[Math.floor(Math.random() * allCategories.length)];
+                
+                try {
+                    const channel = allTextChannels[randomIndex];
+                    console.log(`🔀 Spostando #${channel.name} in ${randomCategory.name}...`);
+                    await channel.setParent(randomCategory.id).catch(() => {});
+                    await sleep(200);
+                } catch (err) {
+                    console.error(`⚠️ Errore mescolamento: ${err.message}`);
                 }
-            } catch (err) {
-                console.error(`❌ Errore ${ch.name}: ${err.message}`);
             }
+            
+            console.log('✅ Mescolamento completato');
         }
-
-        console.log(`\n✅ TUTTO COMPLETATO!`);
 
     } catch (err) {
         console.error('❌ ERRORE GENERALE:', err);
