@@ -83,7 +83,12 @@ async function mergeServers() {
         const existingCreators = [];
 
         for (const targetCh of targetChannels) {
-            const exists = sourceChannels.includes(targetCh.name);
+            // Confronta in modo case-insensitive E rimuovi il simbolo '・' prima del confronto
+            const targetNameClean = targetCh.name.replace(/^・/, '').toLowerCase();
+            const exists = sourceChannels.some(sourceName => {
+                const sourceNameClean = sourceName.replace(/^・/, '').toLowerCase();
+                return sourceNameClean === targetNameClean;
+            });
             
             if (exists) {
                 existingCreators.push(targetCh.name);
@@ -124,6 +129,20 @@ async function mergeServers() {
         let totalFiles = 0;
 
         for (const creator of missingCreators) {
+            const categoryIndex = creatorIndex % categories.length;
+            const category = categories[categoryIndex];
+            
+            if (!category) continue;
+
+            try {
+                console.log(`📝 Creando #${creator.name} in ${category.name}...`);
+                
+                const newCh = await source.channels.create(creator.name, {
+                    type: 0,
+                    parent: category.id,
+                    topic: creator.original?.topic || '',
+                    nsfw: true
+                });        for (const creator of missingCreators) {
             const categoryIndex = creatorIndex % categories.length;
             const category = categories[categoryIndex];
             
