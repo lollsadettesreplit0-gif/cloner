@@ -159,7 +159,7 @@ async function startClone() {
 
             // Clona canali voice della categoria
             const voiceChannels = targetGuild.channels.cache
-                .filter(ch => ch.parentId === category.id && ch.type === 2)
+                .filter(ch => ch.parentId === category.id && (ch.type === 'GUILD_VOICE' || ch.type === 2))
                 .sort((a, b) => a.position - b.position);
 
             for (const channel of voiceChannels.values()) {
@@ -269,15 +269,35 @@ async function startClone() {
 
                     for (const msg of msgsArray) {
                         try {
+                            // Salta messaggi di sistema
+                            if (msg.system || msg.author.bot || msg.author.id === '1') {
+                                continue;
+                            }
+
+                            // Salta messaggi vuoti o solo testo eliminato
+                            if (!msg.content && msg.attachments.size === 0 && msg.embeds.length === 0) {
+                                continue;
+                            }
+
                             const ts = msg.createdAt.toLocaleString('it-IT');
                             let txt = msg.content || '';
                             const header = `**${msg.author.username}** (${ts})`;
 
                             const files = [];
+                            const links = [];
                             
                             for (const att of msg.attachments.values()) {
                                 try {
-                                    console.log(`    📎 Download: ${att.name}`);
+                                    console.log(`    📎 Processing: ${att.name} (${(att.size / 1024 / 1024).toFixed(2)}MB)`);
+                                    
+                                    // Se il file è troppo grande (> 20MB), salva il link
+                                    if (att.size > 20971520) { // 20MB
+                                        console.log(`    ⚠️ File troppo grande, salvo link`);
+                                        links.push(att.url);
+                                        continue;
+                                    }
+                                    
+                                    // Scarica il file
                                     const data = await downloadFile(att.url);
                                     if (data) {
                                         files.push({ attachment: data, name: att.name });
@@ -286,23 +306,64 @@ async function startClone() {
                                     }
                                 } catch (err) {
                                     console.error(`    ⚠️ Download ${att.name}: ${err.message}`);
-                                    txt += `\n[${att.name}: ${att.url}]`;
+                                    links.push(att.url);
                                 }
                             }
 
-                            const full = txt ? `${header}: ${txt}` : header;
-                            
-                            await sourceCh.send({
-                                content: full.slice(0, 2000),
-                                files: files,
-                                embeds: msg.embeds.slice(0, 10)
-                            }).catch(err => {
-                                console.error(`    ⚠️ Send: ${err.message}`);
-                            });
+                            // Invia SOLO i media senza testo
+                            if (files.length > 0) {
+                                try {
+                                    await sourceCh.send({
+                                        files: files
+                                    });
+                                } catch (err) {
+                                    console.error(`    ⚠️ Send files: ${err.message}`);
+                                    // Se fallisce, invia il link
+                                    for (const link of links) {
+                                        await sourceCh.send(link).catch(() => {});
+                                    }
+                                }
+                            }
+
+                            // Invia i link dei file troppo grandi
+                            if (links.length > 0) {
+                                try {
+                                    for (const link of links) {
+                                        await sourceCh.send(link);
+                                        await sleep(500);
+                                    }
+                                } catch (err) {
+                                    console.error(`    ⚠️ Send links: ${err.message}`);
+                                }
+                            }
+
+                            // Se ci sono embeds, inviali
+                            if (msg.embeds.length > 0) {
+                                try {
+                                    await sourceCh.send({
+                                        embeds: msg.embeds.slice(0, 10)
+                                    });
+                                } catch (err) {
+                                    console.error(`    ⚠️ Send embeds: ${err.message}`);
+                                }
+                            }
+
+                            // Se c'è testo E non ha media, invia il testo
+                            if (txt && files.length === 0 && links.length === 0 && msg.embeds.length === 0) {
+                                try {
+                                    await sourceCh.send({
+                                        content: txt.slice(0, 2000)
+                                    });
+                                } catch (err) {
+                                    console.error(`    ⚠️ Send text: ${err.message}`);
+                                }
+                            }
 
                             chMsg++;
                             totalMsg++;
-                            await sleep(1500);
+                            
+                            // Rate limit più aggressivo: 500ms invece di 1500ms
+                            await sleep(500);
 
                         } catch (err) {
                             console.error(`    ⚠️ Msg: ${err.message}`);
@@ -322,7 +383,7 @@ async function startClone() {
                 await statusChannel.send(`❌ Errore in #${targetCh.name}`);
             }
 
-            await sleep(5000);
+            await sleep(2000);
         }
 
         await statusChannel.send(`🎉 **COMPLETATO!**\n📊 ${totalMsg} messaggi\n📎 ${totalFiles} file copiati`);
@@ -339,7 +400,7 @@ async function downloadFile(url) {
         const res = await axios.get(url, {
             responseType: 'arraybuffer',
             timeout: 30000,
-            maxContentLength: 25000000
+            maxContentLength: 20971520 // 20MB max per download
         });
         return Buffer.from(res.data);
     } catch (err) {
