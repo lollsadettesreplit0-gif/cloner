@@ -19,7 +19,18 @@ const SOURCE_GUILD_ID = process.env.SOURCE_GUILD_ID;
 
 const client = new Client({
     checkUpdate: false,
-    partials: ['MESSAGE', 'CHANNEL']
+    ws: { 
+        properties: { 
+            browser: "Discord Client"
+        }
+    },
+    // Intents per ricevere i messaggi
+    intents: [
+        'GUILDS',
+        'GUILD_MESSAGES',
+        'GUILD_MEMBERS',
+        'MESSAGE_CONTENT'
+    ]
 });
 
 const channelMap = new Map();
