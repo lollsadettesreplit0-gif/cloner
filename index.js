@@ -1,6 +1,16 @@
 const { Client } = require('discord.js-selfbot-v13');
 const axios = require('axios');
+const http = require('http');
 require('dotenv').config();
+
+// Server HTTP per Render
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Discord bot is running!');
+}).listen(PORT, () => {
+    console.log(`HTTP server listening on port ${PORT}`);
+});
 
 // ========== CONFIGURAZIONE ==========
 const TOKEN = process.env.DISCORD_TOKEN;
