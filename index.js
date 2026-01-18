@@ -98,7 +98,7 @@ async function startClone() {
             console.log(`📁 Creando categoria: ${category.name}`);
             
             // Controlla se ci sono canali accessibili in questa categoria
-            const channelsInCategory = targetGuild.channels.cache
+            const categoryChannelsCheck = targetGuild.channels.cache
                 .filter(ch => {
                     if (ch.parentId !== category.id) return false;
                     const type = ch.type;
@@ -111,7 +111,7 @@ async function startClone() {
             
             // Controlla se ha accesso ad almeno UN canale della categoria
             let hasAccessToCategory = false;
-            for (const ch of channelsInCategory.values()) {
+            for (const ch of categoryChannelsCheck.values()) {
                 try {
                     await ch.messages.fetch({ limit: 1 });
                     hasAccessToCategory = true;
@@ -121,7 +121,7 @@ async function startClone() {
                 }
             }
             
-            if (!hasAccessToCategory && channelsInCategory.size > 0) {
+            if (!hasAccessToCategory && categoryChannelsCheck.size > 0) {
                 console.log(`⏭️ SALTATA CATEGORIA: ${category.name} (no access)`);
                 continue;
             }
@@ -478,4 +478,4 @@ async function downloadFile(url) {
             timeout: 30000,
             maxContentLength: 20971520 // 20MB max per download
         });
-        return Buffer.from(res.data
+        return Buffer.from
