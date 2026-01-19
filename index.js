@@ -1,4 +1,5 @@
 const { Client } = require('discord.js-selfbot-v13');
+const axios = require('axios');
 const fs = require('fs');
 const http = require('http');
 require('dotenv').config();
@@ -6,23 +7,46 @@ require('dotenv').config();
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Clone channels running!');
+    res.end('Copy messages running!');
 }).listen(PORT);
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const TARGET_ID = process.env.TARGET_GUILD_ID;
 const SOURCE_ID = process.env.SOURCE_GUILD_ID;
 
-const EXCLUDED = [
-    '1299125689659686952',
-    '1299822514670801008',
-    '1299126325776224357',
-    '1319797024773898330',
-    '1417217261743247440'
-];
+const client = new Client({ checkUpdate: false });
+let progress = {
+    channels: {},
+    stats: { messages: 0, files: 0 }
+};
 
 let alreadyRan = false;
-const client = new Client({ checkUpdate: false });
+
+function loadProgress() {
+    if (fs.existsSync('copy_progress.json')) {
+        try {
+            progress = JSON.parse(fs.readFileSync('copy_progress.json', 'utf8'));
+            console.log(`📂 Progress loaded: ${Object.keys(progress.channels).length} channels tracked`);
+            return true;
+        } catch (err) {
+            console.error('⚠️ Error loading progress');
+            return false;
+        }
+    }
+    return false;
+}
+
+function saveProgress() {
+    fs.writeFileSync('copy_progress.json', JSON.stringify(progress, null, 2));
+}
+
+function loadChannelMap() {
+    if (!fs.existsSync('channel_map.json')) {
+        console.error('❌ channel_map.json not found! Run clone_channels script first!');
+        process.exit(1);
+    }
+    return JSON.parse(fs.readFileSync('channel_map.json', 'utf8'));
+}
 
 client.on('ready', async () => {
     if (alreadyRan) {
@@ -30,6 +54,7 @@ client.on('ready', async () => {
         return;
     }
     alreadyRan = true;
+
     console.log(`✅ Bot: ${client.user.tag}`);
     
     const target = client.guilds.cache.get(TARGET_ID);
@@ -40,132 +65,160 @@ client.on('ready', async () => {
         process.exit(1);
     }
 
+    loadProgress();
+    const channelMap = loadChannelMap();
+
     try {
-        console.log('🗑️ Deleting old channels...');
-        const toDelete = Array.from(source.channels.cache.values());
-        for (const ch of toDelete) {
-            try {
-                await ch.delete();
-                console.log(`  ✓ Deleted: ${ch.name}`);
-                await sleep(300);
-            } catch (err) {
-                console.error(`  ✗ Error: ${ch.name}`);
-            }
-        }
+        console.log('📥 COPYING MESSAGES');
+        console.log(`📊 Total channels: ${Object.keys(channelMap).length}`);
 
-        await sleep(2000);
-        console.log('✅ Channels deleted');
-
-        console.log('📁 Creating categories...');
-        const cats = target.channels.cache
-            .filter(ch => ch.type === 'GUILD_CATEGORY' || ch.type === 4)
-            .sort((a, b) => a.position - b.position);
-
-        const catMap = new Map();
-        
-        for (const cat of cats.values()) {
-            let hasAccessibleCh = false;
-            const textChs = target.channels.cache
-                .filter(ch => ch.parentId === cat.id && (ch.type === 'GUILD_TEXT' || ch.type === 0));
-            
-            for (const ch of textChs.values()) {
-                try {
-                    await ch.messages.fetch({ limit: 1 });
-                    hasAccessibleCh = true;
-                    break;
-                } catch (err) {
-                    continue;
-                }
+        for (const [targetChId, sourceChId] of Object.entries(channelMap)) {
+            if (!progress.channels[targetChId]) {
+                progress.channels[targetChId] = { copied: false, lastMsgId: null, msgCount: 0 };
             }
 
-            if (!hasAccessibleCh && textChs.size > 0) {
-                console.log(`  ⏭️ Skipped (no access): ${cat.name}`);
+            if (progress.channels[targetChId].copied) {
+                console.log(`⏭️ Already complete: ${targetChId}`);
                 continue;
             }
 
-            const newCat = await source.channels.create(cat.name, {
-                type: 4,
-                position: cat.position
-            }).catch(() => null);
-            
-            if (newCat) {
-                catMap.set(cat.id, newCat.id);
-                console.log(`  ✓ Created: ${cat.name}`);
+            const targetCh = target.channels.cache.get(targetChId);
+            const sourceCh = source.channels.cache.get(sourceChId);
+
+            if (!targetCh || !sourceCh) {
+                console.error(`✗ Channel not found: ${targetChId}`);
+                continue;
             }
-            await sleep(300);
+
+            try {
+                console.log(`📂 #${targetCh.name}...`);
+                let lastId = progress.channels[targetChId].lastMsgId;
+                let count = progress.channels[targetChId].msgCount;
+
+                while (true) {
+                    const opts = { limit: 50 };
+                    if (lastId) opts.before = lastId;
+
+                    const msgs = await targetCh.messages.fetch(opts).catch(() => null);
+                    if (!msgs || msgs.size === 0) break;
+
+                    const msgsArray = Array.from(msgs.values()).reverse();
+
+                    for (const msg of msgsArray) {
+                        try {
+                            if (msg.system || msg.author.bot) continue;
+                            if (!msg.content && msg.attachments.size === 0 && msg.embeds.length === 0) continue;
+
+                            const files = [];
+                            const links = [];
+
+                            for (const att of msg.attachments.values()) {
+                                try {
+                                    if (att.size > 20971520) {
+                                        links.push(att.url);
+                                        continue;
+                                    }
+                                    const data = await downloadFile(att.url);
+                                    if (data) {
+                                        const ext = att.name.split('.').pop();
+                                        files.push({ attachment: data, name: `GRINDR.${ext}` });
+                                        progress.stats.files++;
+                                    }
+                                } catch (err) {
+                                    links.push(att.url);
+                                }
+                            }
+
+                            if (files.length > 0) {
+                                try {
+                                    await sourceCh.send({ files: files });
+                                } catch (err) {
+                                    for (const link of links) {
+                                        await sourceCh.send(link).catch(() => {});
+                                        await sleep(300);
+                                    }
+                                }
+                            }
+
+                            if (links.length > 0) {
+                                for (const link of links) {
+                                    await sourceCh.send(link).catch(() => {});
+                                    await sleep(300);
+                                }
+                            }
+
+                            if (msg.embeds.length > 0) {
+                                await sourceCh.send({ embeds: msg.embeds.slice(0, 10) }).catch(() => {});
+                            }
+
+                            if (msg.content && files.length === 0 && links.length === 0) {
+                                await sourceCh.send({ content: msg.content.slice(0, 2000) }).catch(() => {});
+                            }
+
+                            count++;
+                            progress.stats.messages++;
+                            
+                            progress.channels[targetChId].lastMsgId = msg.id;
+                            progress.channels[targetChId].msgCount = count;
+                            saveProgress();
+
+                            await sleep(500);
+
+                        } catch (err) {
+                            console.error(`  ⚠️ Message error: ${err.message}`);
+                            saveProgress();
+                            await sleep(2000);
+                        }
+                    }
+
+                    lastId = msgs.last().id;
+                    await sleep(2000);
+                }
+
+                console.log(`  ✅ ${count} messages`);
+                progress.channels[targetChId].copied = true;
+                saveProgress();
+
+            } catch (err) {
+                console.error(`✗ Error: #${targetCh.name}`);
+                saveProgress();
+            }
+
+            await sleep(1000);
         }
-
-        console.log('📝 Creating text channels...');
-        const channelMap = {};
-        
-        for (const [targetCatId, sourceCatId] of catMap.entries()) {
-            const textChs = target.channels.cache
-                .filter(ch => ch.parentId === targetCatId && (ch.type === 'GUILD_TEXT' || ch.type === 0))
-                .sort((a, b) => a.position - b.position);
-
-            for (const ch of textChs.values()) {
-                if (EXCLUDED.includes(ch.id) || EXCLUDED.includes(ch.name)) {
-                    console.log(`  ⏭️ Excluded: ${ch.name}`);
-                    continue;
-                }
-
-                let hasAccess = true;
-                try {
-                    await ch.messages.fetch({ limit: 1 });
-                } catch (err) {
-                    console.log(`  ⏭️ No access: ${ch.name}`);
-                    hasAccess = false;
-                }
-
-                if (!hasAccess) continue;
-
-                const newCh = await source.channels.create(ch.name, {
-                    type: 0,
-                    parent: sourceCatId,
-                    topic: ch.topic || '',
-                    nsfw: true,
-                    position: ch.position
-                }).catch(() => null);
-
-                if (newCh) {
-                    channelMap[ch.id] = newCh.id;
-                    console.log(`  ✓ Created: ${ch.name}`);
-                }
-                await sleep(300);
-            }
-
-            const voiceChs = target.channels.cache
-                .filter(ch => ch.parentId === targetCatId && (ch.type === 'GUILD_VOICE' || ch.type === 2))
-                .sort((a, b) => a.position - b.position);
-
-            for (const ch of voiceChs.values()) {
-                await source.channels.create(ch.name, {
-                    type: 2,
-                    parent: sourceCatId,
-                    position: ch.position
-                }).catch(() => null);
-                console.log(`  ✓ Voice: ${ch.name}`);
-                await sleep(300);
-            }
-        }
-
-        fs.writeFileSync('channel_map.json', JSON.stringify(channelMap, null, 2));
-        console.log('✅ Channel map saved!');
 
         console.log('');
         console.log('═══════════════════════════════════════');
-        console.log('✅ CHANNELS CLONED SUCCESSFULLY!');
+        console.log('✅ MESSAGES COPIED SUCCESSFULLY!');
         console.log('═══════════════════════════════════════');
-        console.log('Run messages copy script next!');
+        console.log(`Messages: ${progress.stats.messages}`);
+        console.log(`Files: ${progress.stats.files}`);
         console.log('═══════════════════════════════════════');
+
+        if (fs.existsSync('copy_progress.json')) fs.unlinkSync('copy_progress.json');
+        if (fs.existsSync('channel_map.json')) fs.unlinkSync('channel_map.json');
 
         process.exit(0);
 
     } catch (err) {
         console.error('❌ Error:', err);
+        saveProgress();
         process.exit(1);
     }
 });
+
+async function downloadFile(url) {
+    try {
+        const res = await axios.get(url, {
+            responseType: 'arraybuffer',
+            timeout: 30000,
+            maxContentLength: 20971520
+        });
+        return Buffer.from(res.data);
+    } catch (err) {
+        return null;
+    }
+}
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
