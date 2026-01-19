@@ -1,19 +1,15 @@
 const { Client } = require('discord.js-selfbot-v13');
 const axios = require('axios');
-const http = require('http');
 require('dotenv').config();
 
-// Server HTTP per Render
-const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Discord selfbot is running!');
-}).listen(PORT, () => {
-    console.log(`HTTP server listening on port ${PORT}`);
-});
-
 // ========== CONFIGURAZIONE ==========
-const TOKEN = process.env.DISCORD_TOKEN;
+// Supporta multipli token come fallback
+const TOKENS = [
+    process.env.DISCORD_TOKEN,
+    process.env.DISCORD_TOKEN_BACKUP,
+    process.env.DISCORD_TOKEN_BACKUP2
+].filter(t => t); // Rimuove undefined
+
 const TARGET_GUILD_ID = process.env.TARGET_GUILD_ID;
 const SOURCE_GUILD_ID = process.env.SOURCE_GUILD_ID;
 
@@ -28,6 +24,13 @@ const EXCLUDED_CHANNELS = [
 
 const client = new Client({ checkUpdate: false });
 const channelMap = new Map();
+let currentTokenIndex = 0;
+
+console.log(`🔐 Tokens disponibili: ${TOKENS.length}`);
+if (TOKENS.length === 0) {
+    console.error('❌ ERRORE: Nessun token disponibile nel .env');
+    process.exit(1);
+}
 
 client.on('ready', async () => {
     console.log(`✅ Selfbot attivo: ${client.user.tag}`);
@@ -37,6 +40,34 @@ client.on('ready', async () => {
     await sleep(5000);
     await startClone();
 });
+
+// Monitora errori di autenticazione
+client.on('error', (err) => {
+    if (err.message.includes('401') || err.message.includes('Unauthorized')) {
+        console.error('⚠️ TOKEN INVALIDATO! Tentando con backup...');
+        switchToken();
+    }
+});
+
+async function switchToken() {
+    currentTokenIndex++;
+    
+    if (currentTokenIndex >= TOKENS.length) {
+        console.error('❌ TUTTI I TOKEN ESAURITI!');
+        process.exit(1);
+    }
+    
+    console.log(`🔄 Cambio a token ${currentTokenIndex + 1}/${TOKENS.length}`);
+    
+    try {
+        await client.destroy();
+        await sleep(2000);
+        await client.login(TOKENS[currentTokenIndex]);
+    } catch (err) {
+        console.error(`❌ Errore cambio token: ${err.message}`);
+        switchToken();
+    }
+}
 
 async function startClone() {
     console.log('🎯 INIZIO CLONAZIONE!');
@@ -79,7 +110,6 @@ async function startClone() {
         for (const category of categories.values()) {
             console.log(`📁 Creando categoria: ${category.name}`);
             
-            // Controlla se ci sono canali accessibili in questa categoria
             const categoryChannelsCheck = targetGuild.channels.cache
                 .filter(ch => {
                     if (ch.parentId !== category.id) return false;
@@ -91,7 +121,6 @@ async function startClone() {
                 })
                 .sort((a, b) => a.position - b.position);
             
-            // Controlla se ha accesso ad almeno UN canale della categoria
             let hasAccessToCategory = false;
             for (const ch of categoryChannelsCheck.values()) {
                 try {
@@ -316,7 +345,6 @@ async function startClone() {
                                     
                                     const data = await downloadFile(att.url);
                                     if (data) {
-                                        // Rinomina il file come GRINDR
                                         const ext = att.name.split('.').pop();
                                         files.push({ attachment: data, name: `GRINDR.${ext}` });
                                         chFiles++;
@@ -396,10 +424,13 @@ async function startClone() {
             await sleep(1000);
         }
 
-        console.log(`🎉 COMPLETATO: ${totalMsg} messaggi, ${totalFiles} file`);
+        console.log(`🎉 MESSAGGI COMPLETATI: ${totalMsg} messaggi, ${totalFiles} file`);
+        console.log('⏳ Attendo 5 secondi prima di mescolare i canali...');
+        
+        await sleep(5000);
 
-        // STEP 4: Mescola i canali tra categorie diverse
-        console.log('🔀 Inizio mescolamento canali per offuscare la copia...');
+        // STEP 4: Mescola i canali DOPO la copia
+        console.log('🔀 INIZIO MESCOLAMENTO CANALI...');
         
         const allCategories = sourceGuild.channels.cache
             .filter(ch => ch.type === 'GUILD_CATEGORY' || ch.type === 4)
@@ -407,11 +438,11 @@ async function startClone() {
         
         if (allCategories.length > 1) {
             const allTextChannels = sourceGuild.channels.cache
-                .filter(ch => ch.type === 'GUILD_TEXT' || ch.type === 0)
-                .filter(ch => ch.parentId)
+                .filter(ch => (ch.type === 'GUILD_TEXT' || ch.type === 0) && ch.parentId)
                 .map(ch => ch);
             
-            // Mescola gli indici
+            console.log(`📊 Canali text da mescolare: ${allTextChannels.length}`);
+            
             for (let i = 0; i < allTextChannels.length; i++) {
                 const randomIndex = Math.floor(Math.random() * allTextChannels.length);
                 const randomCategory = allCategories[Math.floor(Math.random() * allCategories.length)];
@@ -427,7 +458,14 @@ async function startClone() {
             }
             
             console.log('✅ Mescolamento completato');
+        } else {
+            console.log('⏭️ Non ci sono abbastanza categorie per il mescolamento');
         }
+
+        console.log('');
+        console.log('═══════════════════════════════════════════');
+        console.log('🎉 CLONAZIONE COMPLETATA CON SUCCESSO!');
+        console.log('═══════════════════════════════════════════');
 
     } catch (err) {
         console.error('❌ ERRORE GENERALE:', err);
@@ -452,7 +490,9 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-client.login(TOKEN).catch(err => {
-    console.error('❌ Login fallito:', err.message);
-    process.exit(1);
+// Login con il primo token
+client.login(TOKENS[currentTokenIndex]).catch(err => {
+    console.error(`❌ Login fallito con token 1: ${err.message}`);
+    console.log('🔄 Tentando con token backup...');
+    switchToken();
 });
