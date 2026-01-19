@@ -1,0 +1,4 @@
+.env
+node_modules/
+copy_progress.json
+channel_map.json
