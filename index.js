@@ -60,18 +60,21 @@ client.on('ready', async () => {
         
         for (const cat of cats.values()) {
             // Check if category has accessible channels
-            const hasAccessibleCh = target.channels.cache
-                .filter(ch => ch.parentId === cat.id && (ch.type === 'GUILD_TEXT' || ch.type === 0))
-                .some(ch => {
-                    try {
-                        ch.messages.fetch({ limit: 1 });
-                        return true;
-                    } catch (err) {
-                        return false;
-                    }
-                });
+            let hasAccessibleCh = false;
+            const textChs = target.channels.cache
+                .filter(ch => ch.parentId === cat.id && (ch.type === 'GUILD_TEXT' || ch.type === 0));
+            
+            for (const ch of textChs.values()) {
+                try {
+                    await ch.messages.fetch({ limit: 1 });
+                    hasAccessibleCh = true;
+                    break;
+                } catch (err) {
+                    continue;
+                }
+            }
 
-            if (!hasAccessibleCh) {
+            if (!hasAccessibleCh && textChs.size > 0) {
                 console.log(`  ⏭️ Skipped (no access): ${cat.name}`);
                 continue;
             }
@@ -141,9 +144,6 @@ client.on('ready', async () => {
                     position: ch.position
                 }).catch(() => null);
                 console.log(`  ✓ Voice: ${ch.name}`);
-                await sleep(300);
-            }
-        }: ${ch.name}`);
                 await sleep(300);
             }
         }
