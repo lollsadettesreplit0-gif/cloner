@@ -50,34 +50,69 @@ client.on('ready', async () => {
         await sleep(2000);
         console.log('✅ Channels deleted');
 
-        // Create categories
+        // Create categories (only accessible ones)
         console.log('📁 Creating categories...');
         const cats = target.channels.cache
             .filter(ch => ch.type === 'GUILD_CATEGORY' || ch.type === 4)
             .sort((a, b) => a.position - b.position);
 
         const catMap = new Map();
+        
         for (const cat of cats.values()) {
+            // Check if category has accessible channels
+            const hasAccessibleCh = target.channels.cache
+                .filter(ch => ch.parentId === cat.id && (ch.type === 'GUILD_TEXT' || ch.type === 0))
+                .some(ch => {
+                    try {
+                        ch.messages.fetch({ limit: 1 });
+                        return true;
+                    } catch (err) {
+                        return false;
+                    }
+                });
+
+            if (!hasAccessibleCh) {
+                console.log(`  ⏭️ Skipped (no access): ${cat.name}`);
+                continue;
+            }
+
             const newCat = await source.channels.create(cat.name, {
                 type: 4,
                 position: cat.position
             }).catch(() => null);
-            if (newCat) catMap.set(cat.id, newCat.id);
+            
+            if (newCat) {
+                catMap.set(cat.id, newCat.id);
+                console.log(`  ✓ Created: ${cat.name}`);
+            }
             await sleep(300);
         }
 
-        // Create text channels
+        // Create text channels (only accessible ones)
         console.log('📝 Creating text channels...');
         const channelMap = {};
         
         for (const [targetCatId, sourceCatId] of catMap.entries()) {
-            const targetCat = target.channels.cache.get(targetCatId);
-            const textChs = targetCat.children.cache
-                .filter(ch => ch.type === 'GUILD_TEXT' || ch.type === 0)
+            const textChs = target.channels.cache
+                .filter(ch => ch.parentId === targetCatId && (ch.type === 'GUILD_TEXT' || ch.type === 0))
                 .sort((a, b) => a.position - b.position);
 
             for (const ch of textChs.values()) {
-                if (EXCLUDED.includes(ch.id) || EXCLUDED.includes(ch.name)) continue;
+                if (EXCLUDED.includes(ch.id) || EXCLUDED.includes(ch.name)) {
+                    console.log(`  ⏭️ Excluded: ${ch.name}`);
+                    continue;
+                }
+
+                // Check access
+                let hasAccess = true;
+                try {
+                    await ch.messages.fetch({ limit: 1 });
+                } catch (err) {
+                    console.log(`  ⏭️ No access: ${ch.name}`);
+                    hasAccess = false;
+                }
+
+                if (!hasAccess) continue;
 
                 const newCh = await source.channels.create(ch.name, {
                     type: 0,
@@ -95,8 +130,8 @@ client.on('ready', async () => {
             }
 
             // Create voice channels
-            const voiceChs = targetCat.children.cache
-                .filter(ch => ch.type === 'GUILD_VOICE' || ch.type === 2)
+            const voiceChs = target.channels.cache
+                .filter(ch => ch.parentId === targetCatId && (ch.type === 'GUILD_VOICE' || ch.type === 2))
                 .sort((a, b) => a.position - b.position);
 
             for (const ch of voiceChs.values()) {
@@ -106,6 +141,9 @@ client.on('ready', async () => {
                     position: ch.position
                 }).catch(() => null);
                 console.log(`  ✓ Voice: ${ch.name}`);
+                await sleep(300);
+            }
+        }: ${ch.name}`);
                 await sleep(300);
             }
         }
