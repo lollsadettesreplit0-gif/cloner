@@ -26,10 +26,9 @@ function loadProgress() {
     if (fs.existsSync('copy_progress.json')) {
         try {
             progress = JSON.parse(fs.readFileSync('copy_progress.json', 'utf8'));
-            console.log(`📂 Progress loaded: ${Object.keys(progress.channels).length} channels tracked`);
+            console.log(`📂 Progress loaded: ${Object.keys(progress.channels).length} channels`);
             return true;
         } catch (err) {
-            console.error('⚠️ Error loading progress');
             return false;
         }
     }
@@ -40,19 +39,8 @@ function saveProgress() {
     fs.writeFileSync('copy_progress.json', JSON.stringify(progress, null, 2));
 }
 
-function loadChannelMap() {
-    if (!fs.existsSync('channel_map.json')) {
-        console.error('❌ channel_map.json not found! Run clone_channels script first!');
-        process.exit(1);
-    }
-    return JSON.parse(fs.readFileSync('channel_map.json', 'utf8'));
-}
-
 client.on('ready', async () => {
-    if (alreadyRan) {
-        console.log('⏭️ Already ran, ignoring...');
-        return;
-    }
+    if (alreadyRan) return;
     alreadyRan = true;
 
     console.log(`✅ Bot: ${client.user.tag}`);
@@ -66,34 +54,35 @@ client.on('ready', async () => {
     }
 
     loadProgress();
-    const channelMap = loadChannelMap();
 
     try {
-        console.log('📥 COPYING MESSAGES');
-        console.log(`📊 Total channels: ${Object.keys(channelMap).length}`);
+        const sourceChannels = source.channels.cache
+            .filter(ch => ch.type === 'GUILD_TEXT' || ch.type === 0);
 
-        for (const [targetChId, sourceChId] of Object.entries(channelMap)) {
-            if (!progress.channels[targetChId]) {
-                progress.channels[targetChId] = { copied: false, lastMsgId: null, msgCount: 0 };
+        console.log(`📥 COPYING MESSAGES - ${sourceChannels.size} channels`);
+
+        for (const sourceCh of sourceChannels.values()) {
+            const chId = sourceCh.id;
+
+            if (!progress.channels[chId]) {
+                progress.channels[chId] = { copied: false, lastMsgId: null, msgCount: 0 };
             }
 
-            if (progress.channels[targetChId].copied) {
-                console.log(`⏭️ Already complete: ${targetChId}`);
-                continue;
-            }
-
-            const targetCh = target.channels.cache.get(targetChId);
-            const sourceCh = source.channels.cache.get(sourceChId);
-
-            if (!targetCh || !sourceCh) {
-                console.error(`✗ Channel not found: ${targetChId}`);
+            if (progress.channels[chId].copied) {
+                console.log(`⏭️ #${sourceCh.name} - DONE`);
                 continue;
             }
 
             try {
-                console.log(`📂 #${targetCh.name}...`);
-                let lastId = progress.channels[targetChId].lastMsgId;
-                let count = progress.channels[targetChId].msgCount;
+                console.log(`📂 #${sourceCh.name}...`);
+                let lastId = progress.channels[chId].lastMsgId;
+                let count = progress.channels[chId].msgCount;
+
+                const targetCh = target.channels.cache.find(
+                    ch => ch.name === sourceCh.name && (ch.type === 'GUILD_TEXT' || ch.type === 0)
+                );
+
+                if (!targetCh) continue;
 
                 while (true) {
                     const opts = { limit: 50 };
@@ -130,14 +119,7 @@ client.on('ready', async () => {
                             }
 
                             if (files.length > 0) {
-                                try {
-                                    await sourceCh.send({ files: files });
-                                } catch (err) {
-                                    for (const link of links) {
-                                        await sourceCh.send(link).catch(() => {});
-                                        await sleep(300);
-                                    }
-                                }
+                                await sourceCh.send({ files: files }).catch(() => {});
                             }
 
                             if (links.length > 0) {
@@ -157,15 +139,13 @@ client.on('ready', async () => {
 
                             count++;
                             progress.stats.messages++;
-                            
-                            progress.channels[targetChId].lastMsgId = msg.id;
-                            progress.channels[targetChId].msgCount = count;
+                            progress.channels[chId].lastMsgId = msg.id;
+                            progress.channels[chId].msgCount = count;
                             saveProgress();
 
                             await sleep(500);
 
                         } catch (err) {
-                            console.error(`  ⚠️ Message error: ${err.message}`);
                             saveProgress();
                             await sleep(2000);
                         }
@@ -175,29 +155,19 @@ client.on('ready', async () => {
                     await sleep(2000);
                 }
 
-                console.log(`  ✅ ${count} messages`);
-                progress.channels[targetChId].copied = true;
+                progress.channels[chId].copied = true;
                 saveProgress();
 
             } catch (err) {
-                console.error(`✗ Error: #${targetCh.name}`);
+                console.error(`✗ #${sourceCh.name}`);
                 saveProgress();
             }
 
             await sleep(1000);
         }
 
-        console.log('');
-        console.log('═══════════════════════════════════════');
-        console.log('✅ MESSAGES COPIED SUCCESSFULLY!');
-        console.log('═══════════════════════════════════════');
-        console.log(`Messages: ${progress.stats.messages}`);
-        console.log(`Files: ${progress.stats.files}`);
-        console.log('═══════════════════════════════════════');
-
-        if (fs.existsSync('copy_progress.json')) fs.unlinkSync('copy_progress.json');
-        if (fs.existsSync('channel_map.json')) fs.unlinkSync('channel_map.json');
-
+        console.log('✅ DONE!');
+        console.log(`Messages: ${progress.stats.messages}, Files: ${progress.stats.files}`);
         process.exit(0);
 
     } catch (err) {
