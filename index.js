@@ -50,7 +50,6 @@ client.on('ready', async () => {
         await sleep(2000);
         console.log('✅ Channels deleted');
 
-        // Create categories (only accessible ones)
         console.log('📁 Creating categories...');
         const cats = target.channels.cache
             .filter(ch => ch.type === 'GUILD_CATEGORY' || ch.type === 4)
@@ -59,7 +58,6 @@ client.on('ready', async () => {
         const catMap = new Map();
         
         for (const cat of cats.values()) {
-            // Check if category has accessible channels
             let hasAccessibleCh = false;
             const textChs = target.channels.cache
                 .filter(ch => ch.parentId === cat.id && (ch.type === 'GUILD_TEXT' || ch.type === 0));
@@ -91,7 +89,6 @@ client.on('ready', async () => {
             await sleep(300);
         }
 
-        // Create text channels (only accessible ones)
         console.log('📝 Creating text channels...');
         const channelMap = {};
         
@@ -106,7 +103,6 @@ client.on('ready', async () => {
                     continue;
                 }
 
-                // Check access
                 let hasAccess = true;
                 try {
                     await ch.messages.fetch({ limit: 1 });
@@ -132,7 +128,6 @@ client.on('ready', async () => {
                 await sleep(300);
             }
 
-            // Create voice channels
             const voiceChs = target.channels.cache
                 .filter(ch => ch.parentId === targetCatId && (ch.type === 'GUILD_VOICE' || ch.type === 2))
                 .sort((a, b) => a.position - b.position);
@@ -148,7 +143,6 @@ client.on('ready', async () => {
             }
         }
 
-        // Save channel map
         fs.writeFileSync('channel_map.json', JSON.stringify(channelMap, null, 2));
         console.log('✅ Channel map saved!');
 
