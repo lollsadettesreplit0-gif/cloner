@@ -28,7 +28,7 @@ const client = new Client({ checkUpdate: false });
 let channelMap = new Map();
 let currentTokenIndex = 0;
 let cloneState = {
-    step: 'start', // start, categories, channels, messages, shuffle, done
+    step: 'start',
     copiedChannels: [],
     totalMsg: 0,
     totalFiles: 0
@@ -40,7 +40,6 @@ if (TOKENS.length === 0) {
     process.exit(1);
 }
 
-// Carica progresso salvato
 function loadCheckpoint() {
     if (fs.existsSync(CHECKPOINT_FILE)) {
         try {
@@ -48,7 +47,6 @@ function loadCheckpoint() {
             console.log(`📂 Progresso trovato: Step ${data.step}`);
             cloneState = data;
             
-            // Ricarica la channelMap
             if (data.channelMap) {
                 channelMap = new Map(data.channelMap);
             }
@@ -61,7 +59,6 @@ function loadCheckpoint() {
     return false;
 }
 
-// Salva progresso
 function saveCheckpoint() {
     const data = {
         ...cloneState,
@@ -79,7 +76,7 @@ client.on('ready', async () => {
     const hasCheckpoint = loadCheckpoint();
     
     if (hasCheckpoint && cloneState.step !== 'done') {
-        console.log(`⏳ Riprendendo da step: ${cloneState.step}`);
+        console.log(`⏳ Checkpoint trovato! Riprendendo da step: ${cloneState.step}`);
     } else {
         console.log('⏳ Clonazione automatica tra 5 secondi...');
         await sleep(5000);
@@ -88,7 +85,6 @@ client.on('ready', async () => {
     await startClone();
 });
 
-// Monitora errori di autenticazione
 client.on('error', (err) => {
     if (err.message.includes('401') || err.message.includes('Unauthorized')) {
         console.error('⚠️ TOKEN INVALIDATO! Tentando con backup...');
@@ -127,7 +123,7 @@ async function startClone() {
     }
 
     try {
-        // STEP 1: Elimina canali SOURCE (solo se è il primo tentativo)
+        // STEP 1: Elimina canali SOURCE (solo al primo avvio)
         if (cloneState.step === 'start') {
             console.log('🎯 INIZIO CLONAZIONE!');
             console.log('🗑️ Eliminazione canali SOURCE...');
@@ -348,7 +344,6 @@ async function startClone() {
             console.log('📥 INIZIO COPIA MESSAGGI');
 
             for (const [targetId, sourceId] of channelMap.entries()) {
-                // Salta se già copiato
                 if (cloneState.copiedChannels.includes(targetId)) {
                     console.log(`⏭️ Canale già copiato: ${targetId}`);
                     continue;
@@ -482,7 +477,7 @@ async function startClone() {
                     console.error(`❌ Errore ${targetCh.name}: ${err.message}`);
                     saveCheckpoint();
                 }
- 
+
                 await sleep(1000);
             }
 
@@ -493,4 +488,9 @@ async function startClone() {
 
         // STEP 4: Mescola i canali
         if (cloneState.step === 'shuffle') {
-            console.log('🔀 INIZIO MESCOLA.
+            console.log('🔀 INIZIO MESCOLAMENTO CANALI...');
+            
+            const allCategories = sourceGuild.channels.cache
+                .filter(ch => ch.type === 'GUILD_CATEGORY' || ch.type === 4)
+                .map(cat => cat);
+   
