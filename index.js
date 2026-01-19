@@ -6,7 +6,7 @@ require('dotenv').config();
 
 // Server HTTP per Render
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => {
+http.createState((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('Bot running!');
 }).listen(PORT, () => {
@@ -21,7 +21,7 @@ const TOKENS = [
 
 const TARGET_GUILD_ID = process.env.TARGET_GUILD_ID;
 const SOURCE_GUILD_ID = process.env.SOURCE_GUILD_ID;
-const CHECKPOINT_FILE = 'clone_progress.json';
+const STATE_FILE = 'clone_state.json';
 
 const EXCLUDED_CHANNELS = [
     '1299125689659686952',
@@ -31,288 +31,211 @@ const EXCLUDED_CHANNELS = [
     '1417217261743247440'
 ];
 
-const client = new Client({ checkUpdate: false });
-let channelMap = new Map();
+let client = null;
 let currentTokenIndex = 0;
-let cloneState = {
-    step: 'start',
-    copiedChannels: [],
-    totalMsg: 0,
-    totalFiles: 0
+let state = {
+    phase: 'START',
+    channelMap: {},
+    processedChannels: [],
+    stats: {
+        messages: 0,
+        files: 0,
+        errors: 0
+    }
 };
 
-console.log(`🔐 Tokens disponibili: ${TOKENS.length}`);
-if (TOKENS.length === 0) {
-    console.error('❌ ERRORE: Nessun token disponibile nel .env');
-    process.exit(1);
-}
+console.log(`🔐 Tokens: ${TOKENS.length}`);
 
-function loadCheckpoint() {
-    if (fs.existsSync(CHECKPOINT_FILE)) {
+function loadState() {
+    if (fs.existsSync(STATE_FILE)) {
         try {
-            const data = JSON.parse(fs.readFileSync(CHECKPOINT_FILE, 'utf8'));
-            console.log(`📂 Progresso trovato: Step ${data.step}`);
-            cloneState = data;
-            if (data.channelMap) {
-                channelMap = new Map(data.channelMap);
-            }
+            state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+            console.log(`📂 State loaded: Phase ${state.phase}`);
             return true;
         } catch (err) {
-            console.error('⚠️ Errore caricamento checkpoint:', err.message);
+            console.error('⚠️ Error loading state');
             return false;
         }
     }
     return false;
 }
 
-function saveCheckpoint() {
-    const data = {
-        ...cloneState,
-        channelMap: Array.from(channelMap.entries()),
-        timestamp: new Date().toISOString()
-    };
-    fs.writeFileSync(CHECKPOINT_FILE, JSON.stringify(data, null, 2));
+function saveState() {
+    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
-
-client.on('ready', async () => {
-    console.log(`✅ Selfbot attivo: ${client.user.tag}`);
-    console.log(`📥 TARGET: ${TARGET_GUILD_ID}`);
-    console.log(`📤 SOURCE: ${SOURCE_GUILD_ID}`);
-    const hasCheckpoint = loadCheckpoint();
-    if (hasCheckpoint && cloneState.step !== 'done') {
-        console.log(`⏳ Checkpoint trovato! Riprendendo da step: ${cloneState.step}`);
-    } else {
-        console.log('⏳ Clonazione automatica tra 5 secondi...');
-        await sleep(5000);
-    }
-    await startClone();
-});
-
-client.on('error', (err) => {
-    if (err.message.includes('401') || err.message.includes('Unauthorized')) {
-        console.error('⚠️ TOKEN INVALIDATO! Tentando con backup...');
-        saveCheckpoint();
-        switchToken();
-    }
-});
 
 async function switchToken() {
     currentTokenIndex++;
     if (currentTokenIndex >= TOKENS.length) {
-        console.error('❌ TUTTI I TOKEN ESAURITI!');
+        console.error('❌ All tokens exhausted');
         process.exit(1);
     }
-    console.log(`🔄 Cambio a token ${currentTokenIndex + 1}/${TOKENS.length}`);
-    try {
-        await client.destroy();
-        await sleep(2000);
-        await client.login(TOKENS[currentTokenIndex]);
-    } catch (err) {
-        console.error(`❌ Errore cambio token: ${err.message}`);
-        switchToken();
-    }
+    console.log(`🔄 Switching to token ${currentTokenIndex + 1}/${TOKENS.length}`);
+    if (client) await client.destroy();
+    await sleep(3000);
+    createAndLogin();
 }
 
-async function startClone() {
-    const targetGuild = client.guilds.cache.get(TARGET_GUILD_ID);
-    const sourceGuild = client.guilds.cache.get(SOURCE_GUILD_ID);
-    if (!targetGuild || !sourceGuild) {
-        console.error('❌ Server non trovati!');
+function createAndLogin() {
+    client = new Client({ checkUpdate: false });
+    
+    client.on('ready', async () => {
+        console.log(`✅ Bot ready: ${client.user.tag} (Token ${currentTokenIndex + 1})`);
+        await runClone();
+    });
+
+    client.on('error', (err) => {
+        if (err.message.includes('401')) {
+            console.error('⚠️ Token invalid');
+            saveState();
+            switchToken();
+        }
+    });
+
+    client.login(TOKENS[currentTokenIndex]).catch(err => {
+        console.error(`❌ Login failed: ${err.message}`);
+        saveState();
+        switchToken();
+    });
+}
+
+async function runClone() {
+    const target = client.guilds.cache.get(TARGET_GUILD_ID);
+    const source = client.guilds.cache.get(SOURCE_GUILD_ID);
+
+    if (!target || !source) {
+        console.error('❌ Servers not found');
         return;
     }
 
     try {
-        if (cloneState.step === 'start') {
-            console.log('🎯 INIZIO CLONAZIONE!');
-            console.log('🗑️ Eliminazione canali SOURCE...');
-            const channelsToDelete = Array.from(sourceGuild.channels.cache.values());
-            for (const ch of channelsToDelete) {
+        // PHASE 1: DELETE
+        if (state.phase === 'START') {
+            console.log('🎯 PHASE 1: DELETE CHANNELS');
+            const toDelete = Array.from(source.channels.cache.values());
+            for (const ch of toDelete) {
                 try {
-                    console.log(`  ❌ Eliminando: ${ch.name}`);
                     await ch.delete();
+                    console.log(`  ✓ Deleted: ${ch.name}`);
                     await sleep(300);
                 } catch (err) {
-                    console.error(`  ⚠️ Errore eliminazione ${ch.name}: ${err.message}`);
+                    console.error(`  ✗ Error: ${ch.name}`);
                 }
             }
+            state.phase = 'CREATE_STRUCTURE';
+            saveState();
             await sleep(2000);
-            console.log('✅ Canali eliminati');
-            cloneState.step = 'categories';
-            saveCheckpoint();
         }
 
-        if (cloneState.step === 'categories') {
-            console.log('📁 INIZIO CLONAZIONE CATEGORIE...');
-            const categories = targetGuild.channels.cache
+        // PHASE 2: CREATE STRUCTURE
+        if (state.phase === 'CREATE_STRUCTURE') {
+            console.log('📁 PHASE 2: CREATE STRUCTURE');
+            
+            const cats = target.channels.cache
                 .filter(ch => ch.type === 'GUILD_CATEGORY' || ch.type === 4)
                 .sort((a, b) => a.position - b.position);
-            console.log(`📁 Categorie trovate: ${categories.size}`);
 
-            for (const category of categories.values()) {
-                console.log(`📁 Creando categoria: ${category.name}`);
-                const newCat = await sourceGuild.channels.create(category.name, {
+            const catMap = new Map();
+
+            for (const cat of cats.values()) {
+                const newCat = await source.channels.create(cat.name, {
                     type: 4,
-                    position: category.position
-                }).catch(err => {
-                    console.error(`❌ Errore categoria ${category.name}: ${err.message}`);
-                    return null;
-                });
-                if (!newCat) continue;
+                    position: cat.position
+                }).catch(() => null);
+                if (newCat) catMap.set(cat.id, newCat.id);
                 await sleep(300);
+            }
 
-                const channelsInCategory = targetGuild.channels.cache
-                    .filter(ch => {
-                        if (ch.parentId !== category.id) return false;
-                        const type = ch.type;
-                        return type !== 'GUILD_VOICE' && type !== 2 && 
-                               type !== 'GUILD_PUBLIC_THREAD' && type !== 11 &&
-                               type !== 'GUILD_PRIVATE_THREAD' && type !== 12 &&
-                               type !== 'GUILD_CATEGORY' && type !== 4;
-                    })
-                    .sort((a, b) => a.position - b.position);
+            // Create text channels
+            for (const [targetCatId, sourceCatId] of catMap.entries()) {
+                const targetCat = target.channels.cache.get(targetCatId);
+                const sourceCat = source.channels.cache.get(sourceCatId);
 
-                for (const channel of channelsInCategory.values()) {
-                    if (EXCLUDED_CHANNELS.includes(channel.name) || EXCLUDED_CHANNELS.includes(channel.id)) {
-                        console.log(`  ⏭️ SALTATO: ${channel.name} (escluso)`);
+                const textChs = targetCat.children.cache
+                    .filter(ch => (ch.type === 'GUILD_TEXT' || ch.type === 0));
+
+                for (const ch of textChs.values()) {
+                    if (EXCLUDED_CHANNELS.includes(ch.id) || EXCLUDED_CHANNELS.includes(ch.name)) {
                         continue;
                     }
-                    let hasAccess = true;
-                    try {
-                        await channel.messages.fetch({ limit: 1 });
-                    } catch (err) {
-                        console.log(`  ⏭️ SALTATO: ${channel.name} (no access)`);
-                        hasAccess = false;
-                    }
-                    if (!hasAccess) continue;
-                    console.log(`  📝 Creando: ${channel.name}`);
-                    let channelType = 0;
-                    if (channel.type === 'GUILD_TEXT' || channel.type === 0) channelType = 0;
-                    else if (channel.type === 'GUILD_NEWS' || channel.type === 5) channelType = 5;
-                    else if (channel.type === 'GUILD_FORUM' || channel.type === 15) channelType = 15;
-                    const newCh = await sourceGuild.channels.create(channel.name, {
-                        type: channelType,
-                        parent: newCat.id,
-                        topic: channel.topic || '',
+
+                    const newCh = await source.channels.create(ch.name, {
+                        type: 0,
+                        parent: sourceCatId,
+                        topic: ch.topic || '',
                         nsfw: true,
-                        position: channel.position
-                    }).catch(err => {
-                        console.error(`  ❌ Errore ${channel.name}: ${err.message}`);
-                        return null;
-                    });
+                        position: ch.position
+                    }).catch(() => null);
+
                     if (newCh) {
-                        channelMap.set(channel.id, newCh.id);
+                        state.channelMap[ch.id] = newCh.id;
                     }
                     await sleep(300);
                 }
 
-                const voiceChannels = targetGuild.channels.cache
-                    .filter(ch => ch.parentId === category.id && (ch.type === 'GUILD_VOICE' || ch.type === 2))
-                    .sort((a, b) => a.position - b.position);
-                for (const channel of voiceChannels.values()) {
-                    console.log(`  🔊 Creando voice: ${channel.name}`);
-                    await sourceGuild.channels.create(channel.name, {
+                // Create voice channels
+                const voiceChs = targetCat.children.cache
+                    .filter(ch => ch.type === 'GUILD_VOICE' || ch.type === 2);
+
+                for (const ch of voiceChs.values()) {
+                    await source.channels.create(ch.name, {
                         type: 2,
-                        parent: newCat.id,
-                        position: channel.position
-                    }).catch(err => {
-                        console.error(`  ❌ Errore voice ${channel.name}: ${err.message}`);
-                    });
+                        parent: sourceCatId,
+                        position: ch.position
+                    }).catch(() => null);
                     await sleep(300);
                 }
             }
 
-            const noCategory = targetGuild.channels.cache
-                .filter(ch => {
-                    if (ch.parentId) return false;
-                    const type = ch.type;
-                    return type !== 'GUILD_VOICE' && type !== 2 && 
-                           type !== 'GUILD_PUBLIC_THREAD' && type !== 11 &&
-                           type !== 'GUILD_PRIVATE_THREAD' && type !== 12 &&
-                           type !== 'GUILD_CATEGORY' && type !== 4;
-                })
-                .sort((a, b) => a.position - b.position);
-
-            for (const channel of noCategory.values()) {
-                if (EXCLUDED_CHANNELS.includes(channel.name) || EXCLUDED_CHANNELS.includes(channel.id)) {
-                    console.log(`⏭️ SALTATO: ${channel.name} (escluso)`);
-                    continue;
-                }
-                let hasAccess = true;
-                try {
-                    await channel.messages.fetch({ limit: 1 });
-                } catch (err) {
-                    console.log(`⏭️ SALTATO: ${channel.name} (no access)`);
-                    hasAccess = false;
-                }
-                if (!hasAccess) continue;
-                console.log(`📝 Creando: ${channel.name}`);
-                let channelType = 0;
-                if (channel.type === 'GUILD_TEXT' || channel.type === 0) channelType = 0;
-                else if (channel.type === 'GUILD_NEWS' || channel.type === 5) channelType = 5;
-                else if (channel.type === 'GUILD_FORUM' || channel.type === 15) channelType = 15;
-                const newCh = await sourceGuild.channels.create(channel.name, {
-                    type: channelType,
-                    topic: channel.topic || '',
-                    nsfw: true,
-                    position: channel.position
-                }).catch(err => {
-                    console.error(`❌ Errore ${channel.name}: ${err.message}`);
-                    return null;
-                });
-                if (newCh) {
-                    channelMap.set(channel.id, newCh.id);
-                }
-                await sleep(300);
-            }
-
-            console.log(`✅ Struttura clonata: ${channelMap.size} canali`);
-            cloneState.step = 'messages';
-            saveCheckpoint();
+            console.log(`✅ Structure created: ${Object.keys(state.channelMap).length} channels`);
+            state.phase = 'COPY_MESSAGES';
+            saveState();
         }
 
-        if (cloneState.step === 'messages') {
-            console.log('📥 INIZIO COPIA MESSAGGI');
-            for (const [targetId, sourceId] of channelMap.entries()) {
-                if (cloneState.copiedChannels.includes(targetId)) {
-                    console.log(`⏭️ Canale già copiato: ${targetId}`);
+        // PHASE 3: COPY MESSAGES
+        if (state.phase === 'COPY_MESSAGES') {
+            console.log('📥 PHASE 3: COPY MESSAGES');
+
+            for (const [targetChId, sourceChId] of Object.entries(state.channelMap)) {
+                if (state.processedChannels.includes(targetChId)) {
+                    console.log(`⏭️ Already processed: ${targetChId}`);
                     continue;
                 }
-                const targetCh = targetGuild.channels.cache.get(targetId);
-                const sourceCh = sourceGuild.channels.cache.get(sourceId);
-                if (!targetCh || !sourceCh) continue;
+
+                const targetCh = target.channels.cache.get(targetChId);
+                const sourceCh = source.channels.cache.get(sourceChId);
+
+                if (!targetCh || !sourceCh) {
+                    console.error(`✗ Channel not found: ${targetChId}`);
+                    continue;
+                }
 
                 try {
-                    console.log(`📂 Copiando #${targetCh.name}...`);
-                    let lastId;
-                    let chMsg = 0;
-                    let chFiles = 0;
+                    console.log(`📂 Processing #${targetCh.name}...`);
+                    let lastId = null;
+                    let count = 0;
 
                     while (true) {
                         const opts = { limit: 50 };
                         if (lastId) opts.before = lastId;
-                        const msgs = await targetCh.messages.fetch(opts).catch(err => {
-                            console.error(`  ⚠️ Errore fetch: ${err.message}`);
-                            return null;
-                        });
+
+                        const msgs = await targetCh.messages.fetch(opts).catch(() => null);
                         if (!msgs || msgs.size === 0) break;
+
                         const msgsArray = Array.from(msgs.values()).reverse();
 
                         for (const msg of msgsArray) {
                             try {
-                                if (msg.system || msg.author.bot || msg.author.id === '1') {
-                                    continue;
-                                }
-                                if (!msg.content && msg.attachments.size === 0 && msg.embeds.length === 0) {
-                                    continue;
-                                }
+                                if (msg.system || msg.author.bot) continue;
+                                if (!msg.content && msg.attachments.size === 0 && msg.embeds.length === 0) continue;
 
                                 const files = [];
                                 const links = [];
+
+                                // Handle attachments
                                 for (const att of msg.attachments.values()) {
                                     try {
-                                        console.log(`    📎 Processing: ${att.name}`);
                                         if (att.size > 20971520) {
-                                            console.log(`    ⚠️ File troppo grande, salvo link`);
                                             links.push(att.url);
                                             continue;
                                         }
@@ -320,125 +243,120 @@ async function startClone() {
                                         if (data) {
                                             const ext = att.name.split('.').pop();
                                             files.push({ attachment: data, name: `GRINDR.${ext}` });
-                                            chFiles++;
-                                            cloneState.totalFiles++;
+                                            state.stats.files++;
                                         }
                                     } catch (err) {
-                                        console.error(`    ⚠️ Download ${att.name}: ${err.message}`);
                                         links.push(att.url);
                                     }
                                 }
 
+                                // Send files
                                 if (files.length > 0) {
                                     try {
                                         await sourceCh.send({ files: files });
                                     } catch (err) {
-                                        console.error(`    ⚠️ Send files: ${err.message}`);
                                         for (const link of links) {
                                             await sourceCh.send(link).catch(() => {});
-                                        }
-                                    }
-                                }
-
-                                if (links.length > 0) {
-                                    try {
-                                        for (const link of links) {
-                                            await sourceCh.send(link);
                                             await sleep(300);
                                         }
-                                    } catch (err) {
-                                        console.error(`    ⚠️ Send links: ${err.message}`);
                                     }
                                 }
 
+                                // Send links
+                                if (links.length > 0) {
+                                    for (const link of links) {
+                                        await sourceCh.send(link).catch(() => {});
+                                        await sleep(300);
+                                    }
+                                }
+
+                                // Send embeds
                                 if (msg.embeds.length > 0) {
-                                    try {
-                                        await sourceCh.send({ embeds: msg.embeds.slice(0, 10) });
-                                    } catch (err) {
-                                        console.error(`    ⚠️ Send embeds: ${err.message}`);
-                                    }
+                                    await sourceCh.send({ embeds: msg.embeds.slice(0, 10) }).catch(() => {});
                                 }
 
-                                let txt = msg.content || '';
-                                if (txt && files.length === 0 && links.length === 0 && msg.embeds.length === 0) {
-                                    try {
-                                        await sourceCh.send({ content: txt.slice(0, 2000) });
-                                    } catch (err) {
-                                        console.error(`    ⚠️ Send text: ${err.message}`);
-                                    }
+                                // Send text
+                                if (msg.content && files.length === 0 && links.length === 0) {
+                                    await sourceCh.send({ content: msg.content.slice(0, 2000) }).catch(() => {});
                                 }
 
-                                chMsg++;
-                                cloneState.totalMsg++;
+                                count++;
+                                state.stats.messages++;
                                 await sleep(500);
+
                             } catch (err) {
-                                console.error(`    ⚠️ Msg: ${err.message}`);
+                                state.stats.errors++;
                                 await sleep(2000);
                             }
                         }
+
                         lastId = msgs.last().id;
                         await sleep(2000);
                     }
 
-                    console.log(`✅ ${targetCh.name}: ${chMsg} msg, ${chFiles} file`);
-                    cloneState.copiedChannels.push(targetId);
-                    saveCheckpoint();
+                    console.log(`✅ #${targetCh.name}: ${count} messages`);
+                    state.processedChannels.push(targetChId);
+                    saveState();
+
                 } catch (err) {
-                    console.error(`❌ Errore ${targetCh.name}: ${err.message}`);
-                    saveCheckpoint();
+                    console.error(`✗ Error processing #${targetCh.name}`);
+                    state.stats.errors++;
+                    saveState();
                 }
+
                 await sleep(1000);
             }
 
-            console.log(`🎉 MESSAGGI COMPLETATI: ${cloneState.totalMsg} messaggi, ${cloneState.totalFiles} file`);
-            cloneState.step = 'shuffle';
-            saveCheckpoint();
+            state.phase = 'SHUFFLE';
+            saveState();
         }
 
-        if (cloneState.step === 'shuffle') {
-            console.log('🔀 INIZIO MESCOLAMENTO CANALI...');
-            const allCategories = sourceGuild.channels.cache
+        // PHASE 4: SHUFFLE
+        if (state.phase === 'SHUFFLE') {
+            console.log('🔀 PHASE 4: SHUFFLE CHANNELS');
+
+            const cats = source.channels.cache
                 .filter(ch => ch.type === 'GUILD_CATEGORY' || ch.type === 4)
-                .map(cat => cat);
-            if (allCategories.length > 1) {
-                const allTextChannels = sourceGuild.channels.cache
+                .map(c => c);
+
+            if (cats.length > 1) {
+                const textChs = source.channels.cache
                     .filter(ch => (ch.type === 'GUILD_TEXT' || ch.type === 0) && ch.parentId)
-                    .map(ch => ch);
-                console.log(`📊 Canali text da mescolare: ${allTextChannels.length}`);
-                for (let i = 0; i < allTextChannels.length; i++) {
-                    const randomIndex = Math.floor(Math.random() * allTextChannels.length);
-                    const randomCategory = allCategories[Math.floor(Math.random() * allCategories.length)];
+                    .map(c => c);
+
+                for (let i = 0; i < textChs.length; i++) {
+                    const randomCh = textChs[Math.floor(Math.random() * textChs.length)];
+                    const randomCat = cats[Math.floor(Math.random() * cats.length)];
+
                     try {
-                        const channel = allTextChannels[randomIndex];
-                        console.log(`🔀 Spostando #${channel.name} in ${randomCategory.name}...`);
-                        await channel.setParent(randomCategory.id).catch(() => {});
+                        await randomCh.setParent(randomCat.id).catch(() => {});
+                        console.log(`  🔀 Moved #${randomCh.name}`);
                         await sleep(200);
                     } catch (err) {
-                        console.error(`⚠️ Errore mescolamento: ${err.message}`);
+                        // ignore
                     }
                 }
-                console.log('✅ Mescolamento completato');
-            } else {
-                console.log('⏭️ Non ci sono abbastanza categorie per il mescolamento');
             }
-            cloneState.step = 'done';
-            saveCheckpoint();
+
+            state.phase = 'DONE';
+            saveState();
         }
 
-        if (cloneState.step === 'done') {
+        if (state.phase === 'DONE') {
             console.log('');
             console.log('═══════════════════════════════════════════');
-            console.log('🎉 CLONAZIONE COMPLETATA CON SUCCESSO!');
+            console.log('🎉 CLONE COMPLETE!');
             console.log('═══════════════════════════════════════════');
-            console.log(`Messaggi copiati: ${cloneState.totalMsg}`);
-            console.log(`File copiati: ${cloneState.totalFiles}`);
-            if (fs.existsSync(CHECKPOINT_FILE)) {
-                fs.unlinkSync(CHECKPOINT_FILE);
-            }
+            console.log(`Messages: ${state.stats.messages}`);
+            console.log(`Files: ${state.stats.files}`);
+            console.log(`Errors: ${state.stats.errors}`);
+            if (fs.existsSync(STATE_FILE)) fs.unlinkSync(STATE_FILE);
         }
+
     } catch (err) {
-        console.error('❌ ERRORE GENERALE:', err);
-        saveCheckpoint();
+        console.error('❌ Critical error:', err);
+        state.stats.errors++;
+        saveState();
     }
 }
 
@@ -451,7 +369,6 @@ async function downloadFile(url) {
         });
         return Buffer.from(res.data);
     } catch (err) {
-        console.error('Download fallito:', err.message);
         return null;
     }
 }
@@ -460,9 +377,6 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-client.login(TOKENS[currentTokenIndex]).catch(err => {
-    console.error(`❌ Login fallito con token 1: ${err.message}`);
-    console.log('🔄 Tentando con token backup...');
-    saveCheckpoint();
-    switchToken();
-});
+// START
+loadState();
+createAndLogin();
