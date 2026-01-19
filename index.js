@@ -21,9 +21,15 @@ const EXCLUDED = [
     '1417217261743247440'
 ];
 
+let alreadyRan = false;
 const client = new Client({ checkUpdate: false });
 
 client.on('ready', async () => {
+    if (alreadyRan) {
+        console.log('⏭️ Already ran, ignoring...');
+        return;
+    }
+    alreadyRan = true;
     console.log(`✅ Bot: ${client.user.tag}`);
     
     const target = client.guilds.cache.get(TARGET_ID);
